@@ -1,0 +1,49 @@
+{
+  "name": "@opendeved/doi-sync-core",
+  "version": "0.1.0",
+  "description": "Pure Zotero, Crossref, and Zenodo DOI sync logic shared by OpenDevEd services.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "node -e \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "lint": "eslint \"src/**/*.ts\" vitest.config.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "bottleneck": "^2.19.5",
+    "fast-xml-parser": "^5.8.0",
+    "p-retry": "^8.0.0",
+    "xmlbuilder2": "^4.0.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.10.1",
+    "eslint": "^10.4.0",
+    "msw": "^2.14.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.59.4",
+    "vitest": "^4.1.6"
+  }
+}
