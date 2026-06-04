@@ -13,6 +13,33 @@ function response(body: unknown): ZenodoResponseLike {
   };
 }
 
+interface LegacyDepositionOptions {
+  readonly doi?: string;
+  readonly reservedDoi?: string;
+  readonly conceptrecid?: string;
+  readonly submitted?: boolean;
+  readonly state?: string;
+}
+
+function legacyDeposition(id: string, options: LegacyDepositionOptions = {}): Readonly<Record<string, unknown>> {
+  return {
+    id,
+    record_id: id,
+    conceptrecid: options.conceptrecid ?? `${Number(id) - 1}`,
+    submitted: options.submitted ?? false,
+    state: options.state ?? 'unsubmitted',
+    metadata: {
+      ...(options.doi ? { doi: options.doi } : {}),
+      ...(options.reservedDoi ? { prereserve_doi: { doi: options.reservedDoi } } : {})
+    },
+    links: {
+      self: `https://sandbox.zenodo.org/api/deposit/depositions/${id}`,
+      html: `https://sandbox.zenodo.org/deposit/${id}`
+    },
+    files: []
+  };
+}
+
 class NonReentrantRunner implements ProviderOperationRunner {
   readonly calls: ProviderName[] = [];
   private runningProvider: ProviderName | null = null;
@@ -274,6 +301,129 @@ describe('ZenodoApiClient', () => {
         Accept: ZENODO_INVENIORDM_ACCEPT,
         Authorization: 'Bearer sandbox-token'
       }
+    });
+  });
+
+  it('finds an unsubmitted Zenodo draft by exact DOI across paginated deposition lists', async () => {
+    const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const fetch: ZenodoFetchLike = (url, init) => {
+      calls.push({ url, init });
+      if (url.includes('page=1')) {
+        return Promise.resolve(response([
+          ...Array.from({ length: 99 }, (_, index) => legacyDeposition(`${500000 + index}`, {
+            doi: `10.53832/other.${index}`
+          })),
+          legacyDeposition('500999', {
+            doi: '10.53832/opendeved.1205',
+            submitted: true,
+            state: 'done'
+          })
+        ]));
+      }
+      if (url.includes('page=2')) {
+        return Promise.resolve(response([
+          legacyDeposition('501001', {
+            doi: ' 10.53832/OpenDevEd.1205 ',
+            conceptrecid: '501000'
+          })
+        ]));
+      }
+      throw new Error(`unexpected URL ${url}`);
+    };
+    const client = new ZenodoApiClient({
+      endpoint: 'https://sandbox.zenodo.org',
+      fetch
+    });
+
+    await expect(client.findDraftByDoi({
+      token: 'sandbox-token',
+      doi: '10.53832/opendeved.1205'
+    })).resolves.toEqual({
+      status: 'found',
+      deposition: {
+        kind: 'legacy_unsubmitted_deposition',
+        deposition: {
+          depositionId: '501001',
+          recordId: '501001',
+          conceptRecordId: '501000',
+          submitted: false,
+          state: 'unsubmitted',
+          doi: ' 10.53832/OpenDevEd.1205 ',
+          fileCount: 0,
+          links: {
+            self: 'https://sandbox.zenodo.org/api/deposit/depositions/501001',
+            html: 'https://sandbox.zenodo.org/deposit/501001'
+          }
+        }
+      }
+    });
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://sandbox.zenodo.org/api/deposit/depositions?page=1&size=100',
+      'https://sandbox.zenodo.org/api/deposit/depositions?page=2&size=100'
+    ]);
+    expect(calls[0]?.init).toEqual({
+      method: 'GET',
+      headers: {
+        Authorization: 'Bearer sandbox-token'
+      }
+    });
+  });
+
+  it('finds an unsubmitted Zenodo draft by exact reserved DOI', async () => {
+    const client = new ZenodoApiClient({
+      endpoint: 'https://sandbox.zenodo.org',
+      fetch: () => Promise.resolve(response([
+        legacyDeposition('501002', {
+          reservedDoi: '10.5072/zenodo.501002'
+        })
+      ]))
+    });
+
+    await expect(client.findDraftByDoi({
+      token: 'sandbox-token',
+      doi: '10.5072/zenodo.501002'
+    })).resolves.toMatchObject({
+      status: 'found',
+      deposition: {
+        deposition: {
+          depositionId: '501002',
+          reservedDoi: '10.5072/zenodo.501002'
+        }
+      }
+    });
+  });
+
+  it('does not recover a dual-DOI draft from a Crossref DOI when the draft only has a Zenodo reserved DOI', async () => {
+    const client = new ZenodoApiClient({
+      endpoint: 'https://sandbox.zenodo.org',
+      fetch: () => Promise.resolve(response([
+        legacyDeposition('501005', {
+          reservedDoi: '10.5072/zenodo.501005'
+        })
+      ]))
+    });
+
+    await expect(client.findDraftByDoi({
+      token: 'sandbox-token',
+      doi: '10.53832/opendeved.1205'
+    })).resolves.toEqual({ status: 'not_found' });
+  });
+
+  it('reports ambiguous unsubmitted Zenodo drafts for duplicate exact DOI matches', async () => {
+    const client = new ZenodoApiClient({
+      endpoint: 'https://sandbox.zenodo.org',
+      fetch: () => Promise.resolve(response([
+        legacyDeposition('501003', { doi: '10.53832/opendeved.1205' }),
+        legacyDeposition('501004', { doi: '10.53832/opendeved.1205' })
+      ]))
+    });
+
+    await expect(client.findDraftByDoi({
+      token: 'sandbox-token',
+      doi: '10.53832/opendeved.1205'
+    })).resolves.toEqual({
+      status: 'ambiguous',
+      depositionIds: ['501003', '501004']
     });
   });
 

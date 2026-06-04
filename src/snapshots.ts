@@ -1,5 +1,6 @@
 import type { FileManifest } from './files.js';
 import type { JsonValue } from './hash.js';
+import { sha256Hex } from './hash.js';
 import { toJsonValue } from './json.js';
 import type { CanonicalMetadataSnapshot } from './metadata.js';
 import type { CrossrefRelation } from './crossref/xml.js';
@@ -59,4 +60,8 @@ export function buildFileManifestSnapshot(fileManifest: FileManifest): JsonValue
       zoteroMtime: file.zoteroMtime ?? null
     }))
   });
+}
+
+export function buildFileManifestHash(fileManifest: FileManifest): string {
+  return sha256Hex(buildFileManifestSnapshot(fileManifest));
 }

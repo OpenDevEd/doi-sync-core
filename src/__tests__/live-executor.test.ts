@@ -87,6 +87,7 @@ describe('executeLiveSyncPlan', () => {
       }),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn()
     };
@@ -208,6 +209,7 @@ describe('executeLiveSyncPlan', () => {
       })),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn()
     };
@@ -315,6 +317,7 @@ describe('executeLiveSyncPlan', () => {
       })),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
         provider: 'zenodo',
@@ -442,6 +445,7 @@ describe('executeLiveSyncPlan', () => {
       findRecordByDoi: vi.fn(() => Promise.resolve({ status: 'not_found' as const })),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn()
     };
@@ -533,6 +537,7 @@ describe('executeLiveSyncPlan', () => {
       prepareCreateRecord: vi.fn(),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn()
     };
@@ -670,6 +675,7 @@ describe('executeLiveSyncPlan', () => {
       })),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn(() => Promise.resolve(zenodoIdentifiers))
     };
@@ -908,6 +914,7 @@ describe('executeLiveSyncPlan', () => {
         draftRecordId: '20342806',
         parentId: '20342805'
       })),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn(() => Promise.resolve(zenodoIdentifiers))
     };
@@ -1011,6 +1018,7 @@ describe('executeLiveSyncPlan', () => {
       prepareCreateRecord: vi.fn(),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn(() => Promise.resolve(zenodoIdentifiers))
     };
@@ -1137,6 +1145,7 @@ describe('executeLiveSyncPlan', () => {
       prepareCreateRecord: vi.fn(),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
 	      publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
 	        provider: 'zenodo',
@@ -1274,6 +1283,7 @@ describe('executeLiveSyncPlan', () => {
       prepareCreateRecord: vi.fn(),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
         provider: 'zenodo',
@@ -1396,6 +1406,7 @@ describe('executeLiveSyncPlan', () => {
       })),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn(() => Promise.resolve({
         latestRecordId: '502440',
@@ -1507,6 +1518,7 @@ describe('executeLiveSyncPlan', () => {
       prepareCreateRecord: vi.fn(),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn()
     };
@@ -1646,6 +1658,7 @@ describe('executeLiveSyncPlan', () => {
       prepareCreateRecord: vi.fn(),
       prepareAdoptLegacyDeposition: vi.fn(() => Promise.reject(new Error('sandbox Zenodo outage'))),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn()
     };
@@ -1758,6 +1771,7 @@ describe('executeLiveSyncPlan', () => {
       })),
       prepareAdoptLegacyDeposition: vi.fn(),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn()
     };
@@ -1863,6 +1877,7 @@ describe('executeLiveSyncPlan', () => {
         draftRecordId: '504449'
       })),
       prepareUpdateRecordMetadata: vi.fn(),
+      prepareUpdateRecordFiles: vi.fn(),
       prepareNewVersion: vi.fn(),
       publishDraft: vi.fn()
     };

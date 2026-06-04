@@ -52,6 +52,7 @@ export interface ExternalSyncState {
   readonly zenodoLegacyDepositionState?: 'unsubmitted' | null;
   readonly zenodoRecoveredFromZoteroWriteback?: boolean;
   readonly zenodoRecoveredFromPrePublishJournal?: boolean;
+  readonly zenodoRecoveredFromFileSnapshot?: boolean;
   readonly zenodoRecoveredZenodoPayloadHash?: string | null;
   readonly zenodoRecoveredFileManifestHash?: string | null;
   readonly zenodoJournaledDraftOperationType?: ZenodoPublishJournalOperationType | null;
@@ -92,6 +93,7 @@ export type SyncOperation =
   | { readonly type: 'zenodo_draft_update'; readonly depositionId: string; readonly payloadHash: string }
   | { readonly type: 'zenodo_legacy_deposition_adopt'; readonly depositionId: string; readonly payloadHash: string; readonly fileManifestHash: string }
   | { readonly type: 'zenodo_metadata_update'; readonly payloadHash: string }
+  | { readonly type: 'zenodo_file_update'; readonly payloadHash: string; readonly fileManifestHash: string; readonly removedAttachmentKeys: readonly string[] }
   | { readonly type: 'zenodo_new_version'; readonly payloadHash: string; readonly fileManifestHash: string; readonly removedAttachmentKeys: readonly string[] }
   | {
       readonly type: 'zenodo_publish_journaled_draft';
@@ -116,14 +118,12 @@ export interface SyncHashes {
  * attention marker rides alongside the operations that CAN still run.
  */
 export type SyncAttention =
-  | { readonly reason: 'EXTERNAL_CROSSREF_ZENODO_VERSION_UNSUPPORTED' }
   | { readonly reason: 'ZOTERO_FILE_CONFLICT' };
 
 export type SyncPlan =
   | { readonly status: 'skipped'; readonly reason: 'DOI_NOT_ACTIVE' | 'MISSING_REQUIRED_IDENTIFIERS' }
   | { readonly status: 'needs_attention'; readonly reason: 'DOI_DRIFT'; readonly operations: readonly []; readonly drift: ReturnType<typeof analyzeDoiDrift> }
   | { readonly status: 'needs_attention'; readonly reason: 'ZOTERO_ITEM_DELETED'; readonly operations: readonly [] }
-  | { readonly status: 'needs_attention'; readonly reason: 'EXTERNAL_CROSSREF_ZENODO_VERSION_UNSUPPORTED'; readonly operations: readonly [] }
   | { readonly status: 'needs_attention'; readonly reason: 'ZOTERO_FILE_CONFLICT'; readonly operations: readonly [] }
   | { readonly status: 'needs_attention'; readonly reason: 'ZENODO_DOI_ALREADY_EXISTS_UNRESOLVED'; readonly operations: readonly [] }
   | { readonly status: 'needs_attention'; readonly reason: 'ZENODO_DOI_LOOKUP_AMBIGUOUS'; readonly operations: readonly [] }
@@ -281,6 +281,7 @@ function buildOperations(
         depositionId: state.zenodoLegacyDepositionId,
         payloadHash: hashes.zenodoPayloadHash
       });
+      operations.push({ type: 'zotero_writeback' });
     }
     return buildOperationsResult(prependCrossrefOperation(state, hashes, crossrefRelation, operations), conflictAttention);
   }
@@ -292,6 +293,7 @@ function buildOperations(
         type: 'zenodo_draft_create',
         payloadHash: hashes.zenodoPayloadHash
       });
+      operations.push({ type: 'zotero_writeback' });
       return buildOperationsResult(prependCrossrefOperation(state, hashes, crossrefRelation, operations), conflictAttention);
     }
 
@@ -328,15 +330,16 @@ function buildOperations(
       operations.push({ type: 'zenodo_metadata_update', payloadHash: hashes.zenodoPayloadHash });
     }
   } else if (zenodoFilesChanged && zenodoDoiPolicy === 'external-crossref') {
-    // A published external-(Crossref-)DOI Zenodo record cannot version or replace its files
-    // (newversion is forbidden for external DOIs and the published bucket is locked). Surface the
-    // file change as attention, but keep syncing Crossref + Zenodo metadata so a blocked file does
-    // not stall the rest of the record. fileManifestHash is deliberately never advanced (no file
-    // operation runs), so the change keeps re-flagging until it is resolved.
-    attention = { reason: 'EXTERNAL_CROSSREF_ZENODO_VERSION_UNSUPPORTED' };
     if (zenodoMetadataChanged) {
       operations.push({ type: 'zenodo_metadata_update', payloadHash: hashes.zenodoPayloadHash });
     }
+    operations.push({
+      type: 'zenodo_file_update',
+      payloadHash: hashes.zenodoPayloadHash,
+      fileManifestHash: hashes.fileManifestHash,
+      removedAttachmentKeys
+    });
+    operations.push({ type: 'zotero_writeback' });
   } else if (zenodoFilesChanged) {
     operations.push({
       type: 'zenodo_new_version',
@@ -376,6 +379,7 @@ type UnsafeZenodoDoiRecoveryReason = Extract<SyncPlan, { readonly status: 'needs
 
 function unsafeZenodoDoiRecoveryBlockReason(input: PlanRecordSyncInput): UnsafeZenodoDoiRecoveryReason | null {
   if (input.state?.zenodoLatestRecordId || knownZenodoRecordId(input.record)) return null;
+  if (input.state?.zenodoLegacyDepositionId && input.state.zenodoLegacyDepositionState === 'unsubmitted') return null;
   if (input.state?.lastFailureClass === 'ZENODO_DOI_ALREADY_EXISTS_UNRESOLVED') return 'ZENODO_DOI_ALREADY_EXISTS_UNRESOLVED';
   if (input.state?.lastFailureClass === 'ZENODO_DOI_LOOKUP_AMBIGUOUS') return 'ZENODO_DOI_LOOKUP_AMBIGUOUS';
   return null;

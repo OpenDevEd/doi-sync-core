@@ -26,15 +26,16 @@ export function mergeZenodoVerificationIntoState(input: {
   readonly state?: ExternalSyncState;
   readonly verified: ZenodoVerificationResult;
 }): ExternalSyncState {
+  const state = withoutResolvedZenodoDoiRecoveryFailure(input.state);
   if (input.verified.kind === 'legacy_unsubmitted_deposition') {
     return {
-      ...input.state,
+      ...withoutPublishedZenodoRecordState(state),
       zenodoLegacyDepositionId: input.verified.deposition.depositionId,
       zenodoLegacyDepositionState: input.verified.deposition.state
     };
   }
 
-  return mergePublishedZenodoIdentifiers(input.state, input.verified);
+  return mergePublishedZenodoIdentifiers(state, input.verified);
 }
 
 export function recoverZenodoStateFromZoteroWritebackVerification(input: {
@@ -82,7 +83,7 @@ export function recoverZenodoStateFromPublishJournalVerification(input: {
 
   if (input.verified?.kind === 'legacy_unsubmitted_deposition') {
     const legacyState = {
-      ...input.state,
+      ...withoutPublishedZenodoRecordState(input.state),
       zenodoLegacyDepositionId: input.verified.deposition.depositionId,
       zenodoLegacyDepositionState: input.verified.deposition.state
     };
@@ -102,6 +103,40 @@ export function recoverZenodoStateFromPublishJournalVerification(input: {
   return undefined;
 }
 
+function withoutPublishedZenodoRecordState(state: ExternalSyncState | undefined): ExternalSyncState | undefined {
+  if (!state) return undefined;
+  const retained: MutablePartialExternalSyncState = { ...state };
+  delete retained.zenodoPayloadHash;
+  delete retained.zenodoPayloadSnapshot;
+  delete retained.fileManifestHash;
+  delete retained.fileManifestSnapshot;
+  delete retained.previousAttachmentKeys;
+  delete retained.previousFiles;
+  delete retained.zenodoLatestRecordId;
+  delete retained.zenodoParentId;
+  delete retained.zenodoConceptDoi;
+  delete retained.zenodoVersionDoi;
+  return retained;
+}
+
+function withoutResolvedZenodoDoiRecoveryFailure(state: ExternalSyncState | undefined): ExternalSyncState | undefined {
+  if (!state || !isZenodoDoiRecoveryFailure(state.lastFailureClass)) return state;
+  const retained: MutablePartialExternalSyncState = { ...state };
+  delete retained.lastFailureClass;
+  delete retained.lastFailureSummary;
+  delete retained.consecutiveFailureCount;
+  return retained;
+}
+
+function isZenodoDoiRecoveryFailure(value: string | null | undefined): boolean {
+  return value === 'ZENODO_DOI_ALREADY_EXISTS_UNRESOLVED'
+    || value === 'ZENODO_DOI_LOOKUP_AMBIGUOUS';
+}
+
+type MutablePartialExternalSyncState = {
+  -readonly [Key in keyof ExternalSyncState]?: ExternalSyncState[Key];
+};
+
 /** Recovers missing worker file state when the current Zenodo record already has the same file md5 set as Zotero. */
 export function recoverZenodoFileStateFromSnapshot(input: {
   readonly state?: ExternalSyncState;
@@ -110,7 +145,6 @@ export function recoverZenodoFileStateFromSnapshot(input: {
 }): ExternalSyncState | undefined {
   const state = input.state;
   if (!state?.zenodoLatestRecordId) return state;
-  if (hasPersistedFileManifestHash(state)) return state;
   if (!input.snapshot) return state;
   if (input.snapshot.identifiers.latestRecordId !== state.zenodoLatestRecordId) return state;
   if (hasBlockingFileConflict(input.fileManifest)) return state;
@@ -119,8 +153,10 @@ export function recoverZenodoFileStateFromSnapshot(input: {
   const fileManifestSnapshot = buildFileManifestSnapshot(input.fileManifest);
   return {
     ...state,
+    previousAttachmentKeys: input.fileManifest.files.map((file) => file.zoteroAttachmentKey),
     fileManifestHash: sha256Hex(fileManifestSnapshot),
-    fileManifestSnapshot
+    fileManifestSnapshot,
+    zenodoRecoveredFromFileSnapshot: true
   };
 }
 
@@ -142,6 +178,10 @@ export function zenodoPublishJournalVerificationRecordIds(journal: ZenodoPublish
 }
 
 export function isRecoveredZenodoCurrent(state: ExternalSyncState | undefined, hashes: SyncHashes): boolean {
+  if (state?.zenodoRecoveredFromFileSnapshot === true) {
+    return state.zenodoPayloadHash === hashes.zenodoPayloadHash
+      && state.fileManifestHash === hashes.fileManifestHash;
+  }
   if (state?.zenodoRecoveredFromZoteroWriteback === true) {
     return state.zenodoPayloadHash === hashes.zenodoPayloadHash
       && state.fileManifestHash === hashes.fileManifestHash;
@@ -166,10 +206,6 @@ function mergePublishedZenodoIdentifiers(
 
 function uniqueStrings(values: readonly (string | undefined)[]): readonly string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
-}
-
-function hasPersistedFileManifestHash(state: ExternalSyncState): boolean {
-  return typeof state.fileManifestHash === 'string' && state.fileManifestHash.trim().length > 0;
 }
 
 function hasBlockingFileConflict(fileManifest: FileManifest): boolean {

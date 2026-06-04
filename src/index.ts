@@ -71,6 +71,7 @@ export type {
 export { jsonValueSchema } from './json.js';
 export type { JsonObject } from './json.js';
 export type { JsonPrimitive, JsonValue } from './hash.js';
+export { buildFileManifestHash } from './snapshots.js';
 
 /** Settlement helper for converting operation results into persisted worker-state patches. */
 export { settleLiveSyncPlan } from './live-settlement.js';
@@ -132,6 +133,7 @@ export type {
   ResolveCanonicalZoteroRecordInput,
   ResolveZenodoSyncStateInput,
   ZenodoRecordByDoiFinder,
+  ZenodoUnsubmittedDraftByDoiFinder,
   ZenodoRecordVerifier,
   ZoteroItemSnapshot
 } from './recovery.js';
@@ -178,10 +180,12 @@ export type {
   ZenodoPublishedRecordVerification,
   ZenodoRecordIdentifiers,
   ZenodoRecordSnapshot,
+  ZenodoUnsubmittedDraftDoiLookupResult,
   ZenodoVerificationResult,
   ZenodoWritePayloadInput
 } from './zenodo/records.js';
 export type {
+  FindZenodoDraftByDoiInput,
   FindZenodoRecordByDoiInput,
   ReadZenodoRecordSnapshotInput,
   VerifyZenodoRecordInput,

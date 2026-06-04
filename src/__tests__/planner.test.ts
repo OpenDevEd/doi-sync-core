@@ -113,6 +113,31 @@ describe('sync planner', () => {
     });
   });
 
+  it('does not keep blocking after an unresolved DOI collision has been recovered as an unsubmitted draft', () => {
+    const plan = planRecordSync({
+      record: record(),
+      zoteroItem,
+      zoteroChildren: [importedPdf('PDF12345', 'report.pdf', 'abc123')],
+      state: {
+        zenodoLegacyDepositionId: '17585551',
+        zenodoLegacyDepositionState: 'unsubmitted',
+        lastFailureClass: 'ZENODO_DOI_ALREADY_EXISTS_UNRESOLVED',
+        lastFailureSummary: 'Zenodo says DOI already exists, but exact DOI lookup found no published record',
+        consecutiveFailureCount: 2
+      },
+      policy: { callNumberDoiPrefix: '10.53832', doiPolicy: 'dual', fallbackPublicationDate: '1970-01-01' },
+      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
+    });
+
+    expect(plan.status).toBe('write_required');
+    if (plan.status !== 'write_required') throw new Error('expected write-required plan');
+    expect(plan.operations.map((operation) => operation.type)).toEqual([
+      'crossref_redeposit',
+      'zenodo_legacy_deposition_adopt',
+      'zotero_writeback'
+    ]);
+  });
+
   it('plans first-time Crossref redeposit and Zenodo creation for active records', () => {
     const plan = planRecordSync({
       record: record(),
@@ -163,7 +188,7 @@ describe('sync planner', () => {
 
     expect(plan.status).toBe('write_required');
     if (plan.status !== 'write_required') throw new Error('expected write-required plan');
-    expect(plan.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_draft_create']);
+    expect(plan.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_draft_create', 'zotero_writeback']);
   });
 
   it('updates an unpublished Zenodo draft while Zotero still has no uploadable attachment', () => {
@@ -201,7 +226,7 @@ describe('sync planner', () => {
 
     expect(current.status).toBe('write_required');
     if (current.status !== 'write_required') throw new Error('expected write-required plan');
-    expect(current.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_draft_update']);
+    expect(current.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_draft_update', 'zotero_writeback']);
   });
 
   it('does not update an unpublished Zenodo draft when its metadata is already current and no file is available', () => {
@@ -284,7 +309,7 @@ describe('sync planner', () => {
     expect(plan.status).toBe('write_required');
     if (plan.status !== 'write_required') throw new Error('expected write-required plan');
     expect(plan.fileManifest.unsupported.filter((attachment) => attachment.blocksZenodoFiles)).toHaveLength(2);
-    expect(plan.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_draft_create']);
+    expect(plan.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_draft_create', 'zotero_writeback']);
     // The dropped (conflicting) files are surfaced as attention on the create path too.
     expect(plan.attention).toEqual({ reason: 'ZOTERO_FILE_CONFLICT' });
   });
@@ -403,7 +428,8 @@ describe('sync planner', () => {
     if (current.status !== 'write_required') throw new Error('expected write-required plan');
     expect(current.operations).toEqual([
       { type: 'crossref_verify_pending', payloadHash: baseline.hashes.crossrefPayloadHash },
-      { type: 'zenodo_draft_create', payloadHash: baseline.hashes.zenodoPayloadHash }
+      { type: 'zenodo_draft_create', payloadHash: baseline.hashes.zenodoPayloadHash },
+      { type: 'zotero_writeback' }
     ]);
   });
 
@@ -473,7 +499,7 @@ describe('sync planner', () => {
     expect(current.operations.map((operation) => operation.type)).toEqual(['zenodo_new_version', 'zotero_writeback']);
   });
 
-  it('blocks Zenodo file changes for external Crossref DOI records instead of planning an unsupported new version', () => {
+  it('plans same-record Zenodo file updates for external Crossref DOI records instead of new versions', () => {
     const baseline = planRecordSync({
       record: record(),
       zoteroItem,
@@ -499,11 +525,14 @@ describe('sync planner', () => {
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
     });
 
-    // The blocked file change is surfaced via `attention`, never planned as an unsupported new
-    // version, and does not abort the independent Zotero writeback / metadata work.
     expect(current.status).toBe('write_required');
     if (current.status !== 'write_required') throw new Error('expected write-required plan');
-    expect(current.attention).toEqual({ reason: 'EXTERNAL_CROSSREF_ZENODO_VERSION_UNSUPPORTED' });
+    expect(current.attention).toBeUndefined();
+    expect(current.operations.map((operation) => operation.type)).toEqual(['zenodo_file_update', 'zotero_writeback']);
+    expect(current.operations[0]).toMatchObject({
+      type: 'zenodo_file_update',
+      removedAttachmentKeys: []
+    });
     expect(current.operations.some((operation) => operation.type === 'zenodo_new_version')).toBe(false);
   });
 
@@ -544,7 +573,7 @@ describe('sync planner', () => {
     expect(current.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_metadata_update', 'zotero_writeback']);
   });
 
-  it('still syncs Crossref + Zenodo metadata for external Crossref DOI records when files also change, flagging the blocked file as attention', () => {
+  it('syncs Crossref, Zenodo metadata, and same-record files for external Crossref DOI records when metadata and files change', () => {
     const baseline = planRecordSync({
       record: record(),
       zoteroItem,
@@ -575,11 +604,9 @@ describe('sync planner', () => {
 
     expect(current.status).toBe('write_required');
     if (current.status !== 'write_required') throw new Error('expected write-required plan');
-    // The blocked file change must NOT abort the metadata/Crossref sync, and must NOT plan an
-    // (impossible) new version. The file change is surfaced separately via `attention`.
-    expect(current.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_metadata_update', 'zotero_writeback']);
+    expect(current.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_metadata_update', 'zenodo_file_update', 'zotero_writeback']);
+    expect(current.attention).toBeUndefined();
     expect(current.operations.some((operation) => operation.type === 'zenodo_new_version')).toBe(false);
-    expect(current.attention).toEqual({ reason: 'EXTERNAL_CROSSREF_ZENODO_VERSION_UNSUPPORTED' });
   });
 
   it('preserves the current Zenodo/DataCite DOI when external-Crossref policy updates metadata on an existing dual record', () => {
@@ -868,11 +895,13 @@ describe('sync planner', () => {
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
     });
 
-    // The blocked file change is surfaced via `attention`, never planned as an unsupported new
-    // version, and does not abort the independent Zotero writeback / metadata work.
     expect(current.status).toBe('write_required');
     if (current.status !== 'write_required') throw new Error('expected write-required plan');
-    expect(current.attention).toEqual({ reason: 'EXTERNAL_CROSSREF_ZENODO_VERSION_UNSUPPORTED' });
+    expect(current.attention).toBeUndefined();
+    expect(current.operations[0]).toMatchObject({
+      type: 'zenodo_file_update',
+      removedAttachmentKeys: ['PDF12345']
+    });
     expect(current.operations.some((operation) => operation.type === 'zenodo_new_version')).toBe(false);
   });
 
@@ -903,11 +932,13 @@ describe('sync planner', () => {
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
     });
 
-    // The blocked file change is surfaced via `attention`, never planned as an unsupported new
-    // version, and does not abort the independent Zotero writeback / metadata work.
     expect(current.status).toBe('write_required');
     if (current.status !== 'write_required') throw new Error('expected write-required plan');
-    expect(current.attention).toEqual({ reason: 'EXTERNAL_CROSSREF_ZENODO_VERSION_UNSUPPORTED' });
+    expect(current.attention).toBeUndefined();
+    expect(current.operations[0]).toMatchObject({
+      type: 'zenodo_file_update',
+      removedAttachmentKeys: ['PDF12345']
+    });
     expect(current.operations.some((operation) => operation.type === 'zenodo_new_version')).toBe(false);
   });
 
@@ -1013,7 +1044,7 @@ describe('sync planner', () => {
 
     expect(plan.status).toBe('write_required');
     if (plan.status !== 'write_required') throw new Error('expected write-required plan');
-    expect(plan.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_draft_update']);
+    expect(plan.operations.map((operation) => operation.type)).toEqual(['crossref_redeposit', 'zenodo_draft_update', 'zotero_writeback']);
   });
 
   it('plans direct publication for a matching journaled Zenodo draft', () => {

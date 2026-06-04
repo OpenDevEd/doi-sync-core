@@ -14,7 +14,7 @@ import type { ExternalSyncState, DoiSyncRecord, SyncOperation, SyncPlan } from '
 import type { SyncOperationResult, ZenodoOrphanDraftCleanup, ZenodoSettlementIdentifiers } from '../settlement.js';
 import type { MarkZenodoPublishDraftPublishedInput, ProviderStateEnvironment, RecordZenodoPublishDraftInput, ZenodoPreparedDraft, ZenodoPublishJournalOperationType } from '../zenodo/journal.js';
 import { effectiveZenodoDoiPolicy } from '../zenodo/doi-policy.js';
-import type { DoiPolicy, ZenodoDoiLookupResult, ZenodoRecordIdentifiers } from '../zenodo/records.js';
+import type { DoiPolicy, ZenodoDoiLookupResult, ZenodoRecordIdentifiers, ZenodoUnsubmittedDraftDoiLookupResult } from '../zenodo/records.js';
 import { ProviderHttpError } from '../resilience/errors.js';
 import { buildZoteroGroupSelectUrl } from '../zotero/select-link.js';
 import type { AddTagsToZoteroItemInput, ApplyManagedZoteroWritebackInput, CreateLinkedUrlAttachmentInput, DeleteZoteroItemInput, DownloadAttachmentFileInput, DownloadedAttachmentFile, PatchLinkedUrlAttachmentInput } from '../zotero/client.js';
@@ -49,6 +49,10 @@ export interface ZenodoWriter {
     readonly token: string;
     readonly doi: string;
   }) => Promise<ZenodoDoiLookupResult>;
+  readonly findDraftByDoi?: (input: {
+    readonly token: string;
+    readonly doi: string;
+  }) => Promise<ZenodoUnsubmittedDraftDoiLookupResult>;
   readonly deleteUnpublishedDraft?: (input: {
     readonly token: string;
     readonly depositionId: string;
@@ -77,6 +81,16 @@ export interface ZenodoWriter {
     readonly latestRecordId: string;
     readonly doiPolicy: DoiPolicy;
     readonly metadata: CanonicalMetadataSnapshot;
+    readonly zoteroSelectUrl?: string;
+    readonly resourceUrl?: string;
+    readonly onPreparedDraft?: (draft: ZenodoPreparedDraft) => Promise<void>;
+  }) => Promise<ZenodoPreparedDraft>;
+  readonly prepareUpdateRecordFiles: (input: {
+    readonly token: string;
+    readonly latestRecordId: string;
+    readonly doiPolicy: DoiPolicy;
+    readonly metadata: CanonicalMetadataSnapshot;
+    readonly files: readonly ZenodoLiveUploadFile[];
     readonly zoteroSelectUrl?: string;
     readonly resourceUrl?: string;
     readonly onPreparedDraft?: (draft: ZenodoPreparedDraft) => Promise<void>;
@@ -306,6 +320,14 @@ async function executeZenodoOperation(
     });
   }
 
+  if (operation.type === 'zenodo_file_update') {
+    const onPreparedDraft = journalPreparingZenodoDraft(input, operation);
+    return executeJournaledZenodoOperation(input, operation, {
+      prepare: () => prepareUpdateRecordFiles(input, plan, latestRecordId, latestZenodo, onPreparedDraft),
+      publish: publishZenodoDraft(input)
+    });
+  }
+
   if (operation.type === 'zenodo_new_version') {
     const onPreparedDraft = journalPreparingZenodoDraft(input, operation);
     return executeJournaledZenodoOperation(input, operation, {
@@ -320,6 +342,9 @@ async function executeZenodoOperation(
 function missingZenodoRecordResult(operation: ZenodoRecordIdRequiredOperation): SyncOperationResult {
   if (operation.type === 'zenodo_metadata_update') {
     return failed(operation.type, 'ZENODO_MISSING_RECORD', 'Cannot update Zenodo metadata without a latest record id');
+  }
+  if (operation.type === 'zenodo_file_update') {
+    return failed(operation.type, 'ZENODO_MISSING_RECORD', 'Cannot update Zenodo files without a latest record id');
   }
   if (operation.type === 'zenodo_new_version') {
     return failed(operation.type, 'ZENODO_MISSING_RECORD', 'Cannot create a Zenodo version without a latest record id');
@@ -521,6 +546,26 @@ async function prepareNewVersionWithFiles(
   });
 }
 
+async function prepareUpdateRecordFiles(
+  input: ExecuteLiveSyncPlanInput,
+  plan: WriteRequiredSyncPlan,
+  latestRecordId: string,
+  latestZenodo: ZenodoSettlementIdentifiers | null,
+  onPreparedDraft?: (draft: ZenodoPreparedDraft) => Promise<void>
+): Promise<ZenodoPreparedDraft> {
+  const files = await downloadZenodoFiles(input.context.credentials, plan.fileManifest.files, input.providers.zotero);
+  return input.providers.zenodo.prepareUpdateRecordFiles({
+    token: input.context.credentials.zenodoToken,
+    latestRecordId,
+    doiPolicy: existingRecordZenodoDoiPolicy(input, latestZenodo),
+    metadata: plan.metadata,
+    files,
+    zoteroSelectUrl: zenodoBackLinkUrl(input),
+    resourceUrl: input.resourceUrl,
+    ...(onPreparedDraft ? { onPreparedDraft } : {})
+  });
+}
+
 function existingRecordZenodoDoiPolicy(
   input: ExecuteLiveSyncPlanInput,
   latestZenodo: ZenodoSettlementIdentifiers | null
@@ -591,7 +636,8 @@ async function executeUnpublishedZenodoDraftOperation(
   return {
     type: operation.type,
     status: 'succeeded',
-    ...(draft.payloadSnapshot ? { zenodoPayloadSnapshot: draft.payloadSnapshot } : {})
+    ...(draft.payloadSnapshot ? { zenodoPayloadSnapshot: draft.payloadSnapshot } : {}),
+    ...draftSettlementIdentifiers(draft)
   };
 }
 
@@ -604,7 +650,8 @@ async function executeJournaledDraftPublishOperation(
   const draft: ZenodoPreparedDraft = {
     depositionId: operation.depositionId,
     draftRecordId: operation.draftRecordId,
-    ...(operation.parentId ? { parentId: operation.parentId } : {})
+    ...(operation.parentId ? { parentId: operation.parentId } : {}),
+    ...(operation.originalOperationType === 'zenodo_file_update' ? { api: 'invenio_record' as const } : {})
   };
 
   let identifiers: ZenodoRecordIdentifiers;
@@ -872,6 +919,16 @@ function toSettlementZenodoIdentifiers(identifiers: ZenodoRecordIdentifiers): Ze
     parentId: identifiers.parentId,
     ...(identifiers.conceptDoi ? { conceptDoi: identifiers.conceptDoi } : {}),
     ...(identifiers.versionDoi ? { versionDoi: identifiers.versionDoi } : {})
+  };
+}
+
+function draftSettlementIdentifiers(draft: ZenodoPreparedDraft): { readonly zenodo?: ZenodoSettlementIdentifiers } {
+  if (!draft.parentId) return {};
+  return {
+    zenodo: {
+      latestRecordId: draft.draftRecordId,
+      parentId: draft.parentId
+    }
   };
 }
 

@@ -15,6 +15,7 @@ export type ZenodoPublishJournalOperationType =
   | 'zenodo_draft_update'
   | 'zenodo_legacy_deposition_adopt'
   | 'zenodo_metadata_update'
+  | 'zenodo_file_update'
   | 'zenodo_new_version';
 
 export type ZenodoPublishJournalStatus = 'preparing' | 'ready_to_publish' | 'published';
@@ -23,6 +24,7 @@ export interface ZenodoPreparedDraft {
   readonly depositionId: string;
   readonly draftRecordId: string;
   readonly parentId?: string;
+  readonly api?: 'legacy_deposition' | 'invenio_record';
   readonly payloadSnapshot?: JsonValue;
 }
 

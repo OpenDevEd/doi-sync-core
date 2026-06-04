@@ -116,17 +116,6 @@ describe('intended sync diffs', () => {
     const conflictAction = conflictDiff.sections.find((section) => section.title === 'Action needed');
     expect(conflictAction?.lines[0]?.text).toContain('duplicate');
 
-    const externalPlan: SyncPlan = {
-      status: 'write_required',
-      operations: [{ type: 'crossref_redeposit', payloadHash: 'crossref-new' }],
-      metadata,
-      fileManifest,
-      hashes,
-      attention: { reason: 'EXTERNAL_CROSSREF_ZENODO_VERSION_UNSUPPORTED' }
-    };
-    const externalAction = buildIntendedDiff({ ...baseInput, plan: externalPlan })
-      .sections.find((section) => section.title === 'Action needed');
-    expect(externalAction?.lines[0]?.text).toContain('cannot version or replace its files');
   });
 
   it('does not show temporary ZenodoArchiveID removals while a Zenodo adopt is pending provider success', () => {

@@ -83,6 +83,11 @@ export type ZenodoDoiLookupResult =
   | { readonly status: 'not_found' }
   | { readonly status: 'ambiguous'; readonly recordIds: readonly string[] };
 
+export type ZenodoUnsubmittedDraftDoiLookupResult =
+  | { readonly status: 'found'; readonly deposition: Extract<ZenodoVerificationResult, { readonly kind: 'legacy_unsubmitted_deposition' }> }
+  | { readonly status: 'not_found' }
+  | { readonly status: 'ambiguous'; readonly depositionIds: readonly string[] };
+
 /** Builds the legacy-deposition metadata payload used for Zenodo create, edit, and publish flows. */
 export function buildZenodoWritePayload(input: ZenodoWritePayloadInput): ZenodoLegacyDepositionPayload {
   const metadata = input.metadata;

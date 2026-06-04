@@ -20,6 +20,7 @@ const expectedRuntimeExports = [
   'auditZenodoWritePayloadMetadata',
   'buildCanonicalMetadataSnapshot',
   'buildFileManifest',
+  'buildFileManifestHash',
   'buildIntendedDiff',
   'buildZenodoWritePayload',
   'buildZoteroWritebackData',

@@ -3,7 +3,7 @@ import type { ZoteroParentItem } from './metadata.js';
 import type { CanonicalZoteroItemKeyResolver } from './ports.js';
 import type { DoiSyncRecord, ExternalSyncState } from './planner.js';
 import type { ZenodoPublishJournalEntry } from './zenodo/journal.js';
-import type { ZenodoDoiLookupResult, ZenodoVerificationResult } from './zenodo/records.js';
+import type { ZenodoDoiLookupResult, ZenodoUnsubmittedDraftDoiLookupResult, ZenodoVerificationResult } from './zenodo/records.js';
 import {
   mergeZenodoVerificationIntoState,
   readZoteroWritebackZenodoHint,
@@ -52,6 +52,9 @@ export type ZenodoRecordVerifier = (recordId: string) => Promise<ZenodoVerificat
 /** Finds a published Zenodo record by exact DOI for recovering state after worker DB loss. */
 export type ZenodoRecordByDoiFinder = (doi: string) => Promise<ZenodoDoiLookupResult>;
 
+/** Finds an unsubmitted Zenodo draft by exact DOI for recovering state after worker DB loss. */
+export type ZenodoUnsubmittedDraftByDoiFinder = (doi: string) => Promise<ZenodoUnsubmittedDraftDoiLookupResult>;
+
 /** Input for recovering Zenodo state from Zotero Extra, publish journal, or MEE's legacy record id. */
 export interface ResolveZenodoSyncStateInput {
   readonly record: DoiSyncRecord;
@@ -60,6 +63,7 @@ export interface ResolveZenodoSyncStateInput {
   readonly latestJournal?: ZenodoPublishJournalEntry;
   readonly verifyZenodoRecord: ZenodoRecordVerifier;
   readonly findZenodoRecordByDoi?: ZenodoRecordByDoiFinder;
+  readonly findZenodoDraftByDoi?: ZenodoUnsubmittedDraftByDoiFinder;
 }
 
 /** MEE record and sync state after all safe Zenodo recovery hints have been verified. */
@@ -217,19 +221,36 @@ async function recoverFromExistingState(input: ResolveZenodoSyncStateInput): Pro
 }
 
 async function recoverFromDoi(input: ResolveZenodoSyncStateInput): Promise<ExternalSyncState | undefined> {
-  if (!input.findZenodoRecordByDoi) return undefined;
-  const lookup = await input.findZenodoRecordByDoi(input.record.crossrefDoi);
-  if (lookup.status === 'ambiguous') {
+  const publishedLookup = input.findZenodoRecordByDoi
+    ? await input.findZenodoRecordByDoi(input.record.crossrefDoi)
+    : undefined;
+  if (publishedLookup?.status === 'ambiguous') {
     return {
       ...input.existingState,
       lastFailureClass: 'ZENODO_DOI_LOOKUP_AMBIGUOUS',
-      lastFailureSummary: `Zenodo exact DOI lookup for ${input.record.crossrefDoi} found multiple published records: ${lookup.recordIds.join(', ')}`
+      lastFailureSummary: `Zenodo exact DOI lookup for ${input.record.crossrefDoi} found multiple published records: ${publishedLookup.recordIds.join(', ')}`
     };
   }
-  if (lookup.status !== 'found') return undefined;
+  if (publishedLookup?.status === 'found') {
+    return mergeZenodoVerificationIntoState({
+      ...(input.existingState ? { state: input.existingState } : {}),
+      verified: publishedLookup.record
+    });
+  }
+
+  if (!input.findZenodoDraftByDoi) return undefined;
+  const draftLookup = await input.findZenodoDraftByDoi(input.record.crossrefDoi);
+  if (draftLookup.status === 'ambiguous') {
+    return {
+      ...input.existingState,
+      lastFailureClass: 'ZENODO_DOI_LOOKUP_AMBIGUOUS',
+      lastFailureSummary: `Zenodo exact DOI lookup for ${input.record.crossrefDoi} found multiple unsubmitted drafts: ${draftLookup.depositionIds.join(', ')}`
+    };
+  }
+  if (draftLookup.status !== 'found') return undefined;
   return mergeZenodoVerificationIntoState({
     ...(input.existingState ? { state: input.existingState } : {}),
-    verified: lookup.record
+    verified: draftLookup.deposition
   });
 }
 

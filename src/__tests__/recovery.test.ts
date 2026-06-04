@@ -379,6 +379,42 @@ describe('recovery helpers', () => {
     });
   });
 
+  it('clears stale Zenodo DOI lookup failures when an unpublished draft is recovered by exact DOI', async () => {
+    const resolved = await resolveZenodoSyncState({
+      record: originalRecord,
+      existingState: {
+        lastFailureClass: 'ZENODO_DOI_ALREADY_EXISTS_UNRESOLVED',
+        lastFailureSummary: 'Zenodo says DOI already exists, but exact DOI lookup found no published record',
+        consecutiveFailureCount: 3
+      },
+      verifyZenodoRecord: () => Promise.resolve(null),
+      findZenodoRecordByDoi: () => Promise.resolve({ status: 'not_found' }),
+      findZenodoDraftByDoi: () => Promise.resolve({
+        status: 'found',
+        deposition: {
+          kind: 'legacy_unsubmitted_deposition',
+          deposition: {
+            depositionId: '14944686',
+            recordId: '14944686',
+            conceptRecordId: '14944685',
+            submitted: false,
+            state: 'unsubmitted',
+            doi: originalRecord.crossrefDoi,
+            fileCount: 0,
+            links: {}
+          }
+        }
+      })
+    });
+
+    expect(resolved.syncState).toMatchObject({
+      zenodoLegacyDepositionId: '14944686',
+      zenodoLegacyDepositionState: 'unsubmitted'
+    });
+    expect(resolved.syncState?.lastFailureClass).toBeUndefined();
+    expect(resolved.syncState?.lastFailureSummary).toBeUndefined();
+  });
+
   it('does not recover a Zotero Extra draft when its concept id does not match the verified draft', async () => {
     const resolved = await resolveZenodoSyncState({
       record: {

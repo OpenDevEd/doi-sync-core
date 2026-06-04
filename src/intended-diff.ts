@@ -9,7 +9,7 @@ import { planZoteroIdentifierLinkReconciliation } from './zotero/identifier-link
 import { buildZoteroWritebackData, buildZoteroWritebackIdentifiers, planZoteroWriteback, type ZoteroWritebackIdentifiers } from './zotero/writeback.js';
 import type { DoiPolicy } from './zenodo/records.js';
 
-export type IntendedDiffProvider = 'crossref' | 'zenodo' | 'zotero';
+export type IntendedDiffProvider = 'crossref' | 'zenodo' | 'zotero' | 'mee';
 export type IntendedDiffLineKind = 'add' | 'remove' | 'update' | 'info';
 
 export interface IntendedDiffLine {
@@ -79,8 +79,6 @@ function buildAttentionSections(input: BuildIntendedDiffInput): readonly Intende
 
 function attentionMessage(reason: SyncAttention['reason']): string {
   switch (reason) {
-    case 'EXTERNAL_CROSSREF_ZENODO_VERSION_UNSUPPORTED':
-      return 'file change could not be applied: a published external Crossref DOI Zenodo record cannot version or replace its files; Crossref and Zenodo metadata were still synced';
     case 'ZOTERO_FILE_CONFLICT':
       return 'file change could not be applied: two Zotero attachments share a filename with different content; clean up the duplicate Zotero attachments. Crossref and Zenodo metadata were still synced';
   }
@@ -159,6 +157,14 @@ function buildZenodoSections(input: BuildIntendedDiffInput): readonly IntendedDi
     if (operation.type === 'zenodo_metadata_update') {
       lines.push({ kind: 'update', text: 'update published Zenodo metadata' });
       lines.push(...zenodoMetadataDiffLines(input, snapshots, operation.payloadHash));
+    }
+
+    if (operation.type === 'zenodo_file_update') {
+      lines.push({ kind: 'update', text: `update files on published Zenodo record ${formatNullable(input.state?.zenodoLatestRecordId)}` });
+      lines.push(...uploadFileLines(plan.fileManifest.files));
+      lines.push(...removedFileLines(operation.removedAttachmentKeys, input.state?.previousFiles ?? []));
+      lines.push(...changedFileLines(plan.fileManifest.files, input.state?.previousFiles ?? []));
+      lines.push(...zenodoFileManifestDiffLines(input, snapshots, operation.fileManifestHash));
     }
 
     if (operation.type === 'zenodo_new_version') {
@@ -492,6 +498,7 @@ function hasPendingZenodoProviderResult(plan: SyncPlan): boolean {
     || operation.type === 'zenodo_draft_create'
     || operation.type === 'zenodo_draft_update'
     || operation.type === 'zenodo_legacy_deposition_adopt'
+    || operation.type === 'zenodo_file_update'
     || operation.type === 'zenodo_new_version'
     || operation.type === 'zenodo_publish_journaled_draft'
   ));

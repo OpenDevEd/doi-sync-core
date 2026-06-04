@@ -1,4 +1,5 @@
-import { buildZenodoWritePayload, parseZenodoLegacyDepositionIdentifiers, parseZenodoRecordIdentifiers, parseZenodoRecordSnapshot, ZENODO_INVENIORDM_ACCEPT, type DoiPolicy, type ZenodoDoiLookupResult, type ZenodoLegacyDepositionPayload, type ZenodoPublishedRecordVerification, type ZenodoRecordIdentifiers, type ZenodoRecordSnapshot, type ZenodoVerificationResult } from './records.js';
+import { createHash } from 'node:crypto';
+import { buildZenodoWritePayload, parseZenodoLegacyDepositionIdentifiers, parseZenodoRecordIdentifiers, parseZenodoRecordSnapshot, ZENODO_INVENIORDM_ACCEPT, type DoiPolicy, type ZenodoDoiLookupResult, type ZenodoLegacyDepositionIdentifiers, type ZenodoLegacyDepositionPayload, type ZenodoPublishedRecordVerification, type ZenodoRecordIdentifiers, type ZenodoRecordSnapshot, type ZenodoUnsubmittedDraftDoiLookupResult, type ZenodoVerificationResult } from './records.js';
 import type { ZenodoPreparedDraft } from './journal.js';
 import type { CanonicalMetadataSnapshot } from '../metadata.js';
 import { asJsonObject, toJsonValue } from '../json.js';
@@ -32,6 +33,8 @@ export interface FindZenodoRecordByDoiInput {
   readonly token: string;
   readonly doi: string;
 }
+
+export type FindZenodoDraftByDoiInput = FindZenodoRecordByDoiInput;
 
 export interface ReadZenodoRecordSnapshotInput {
   readonly token: string;
@@ -78,6 +81,8 @@ export interface ZenodoUpdateRecordMetadataInput {
 export interface ZenodoCreateNewVersionInput extends ZenodoUpdateRecordMetadataInput {
   readonly files: readonly ZenodoUploadFile[];
 }
+
+export type ZenodoUpdateRecordFilesInput = ZenodoCreateNewVersionInput;
 
 export interface DeleteZenodoUnpublishedDraftInput {
   readonly token: string;
@@ -135,6 +140,30 @@ export class ZenodoApiClient {
     };
   }
 
+  async findDraftByDoi(input: FindZenodoDraftByDoiInput): Promise<ZenodoUnsubmittedDraftDoiLookupResult> {
+    const depositions = await this.listUnsubmittedDepositions(input.token);
+    const normalizedDoi = normalizeDoiForExactMatch(input.doi);
+    const matches = depositions.filter((deposition) => (
+      normalizeDoiForExactMatch(deposition.doi) === normalizedDoi
+      || normalizeDoiForExactMatch(deposition.reservedDoi) === normalizedDoi
+    ));
+    if (matches.length === 0) return { status: 'not_found' };
+    const firstMatch = matches[0];
+    if (matches.length === 1 && firstMatch) {
+      return {
+        status: 'found',
+        deposition: {
+          kind: 'legacy_unsubmitted_deposition',
+          deposition: firstMatch
+        }
+      };
+    }
+    return {
+      status: 'ambiguous',
+      depositionIds: matches.map((deposition) => deposition.depositionId)
+    };
+  }
+
   async readRecordSnapshot(input: ReadZenodoRecordSnapshotInput): Promise<ZenodoRecordSnapshot | null> {
     const response = await this.request(`${this.endpoint}/api/records/${encodeURIComponent(input.recordId)}`, {
       method: 'GET',
@@ -164,6 +193,11 @@ export class ZenodoApiClient {
 
   async createNewVersion(input: ZenodoCreateNewVersionInput): Promise<ZenodoRecordIdentifiers> {
     const draft = await this.prepareNewVersion(input);
+    return this.publishDraft({ token: input.token, draft });
+  }
+
+  async updateRecordFiles(input: ZenodoUpdateRecordFilesInput): Promise<ZenodoRecordIdentifiers> {
+    const draft = await this.prepareUpdateRecordFiles(input);
     return this.publishDraft({ token: input.token, draft });
   }
 
@@ -211,10 +245,23 @@ export class ZenodoApiClient {
     return withPayloadSnapshot(preparedDraft, payload);
   }
 
+  async prepareUpdateRecordFiles(input: ZenodoUpdateRecordFilesInput): Promise<ZenodoPreparedDraft> {
+    const draftRecord = await this.openInvenioEditDraft(input.token, input.latestRecordId);
+    const draft = toInvenioPreparedDraft(draftRecord);
+    await input.onPreparedDraft?.(draft);
+    await this.unlockInvenioDraftFileModification(input.token, draftRecord, input.latestRecordId);
+    await this.replaceInvenioDraftFiles(input.token, input.latestRecordId, input.files);
+    return draft;
+  }
+
   async publishDraft(input: {
     readonly token: string;
     readonly draft: ZenodoPreparedDraft;
   }): Promise<ZenodoRecordIdentifiers> {
+    if (input.draft.api === 'invenio_record') {
+      return this.publishInvenioDraft(input.token, input.draft.draftRecordId)
+        .catch((error: unknown) => this.reconcilePublishedDraftAfterPublishFailure(input.token, input.draft, error));
+    }
     const published = await this.publishDraftRecordId(input.token, input.draft)
       .catch((error: unknown) => this.reconcilePublishedDraftAfterPublishFailure(input.token, input.draft, error));
     if (typeof published !== 'string') return published;
@@ -231,6 +278,14 @@ export class ZenodoApiClient {
     return this.publishDeposition(token, draft.depositionId, draft.draftRecordId);
   }
 
+  private async publishInvenioDraft(token: string, recordId: string): Promise<ZenodoRecordIdentifiers> {
+    const response = await this.request(`${this.endpoint}/api/records/${encodeURIComponent(recordId)}/draft/actions/publish`, {
+      method: 'POST',
+      headers: invenioHeaders(token)
+    });
+    return parseZenodoRecordIdentifiers(await response.json());
+  }
+
   private async verifyLegacyDeposition(input: VerifyZenodoRecordInput): Promise<ZenodoVerificationResult | null> {
     const response = await this.request(`${this.endpoint}/api/deposit/depositions/${encodeURIComponent(input.recordId)}`, {
       method: 'GET',
@@ -245,6 +300,24 @@ export class ZenodoApiClient {
       kind: 'legacy_unsubmitted_deposition',
       deposition
     } : null;
+  }
+
+  private async listUnsubmittedDepositions(token: string): Promise<readonly ZenodoLegacyDepositionIdentifiers[]> {
+    const pageSize = 100;
+    const depositions: ZenodoLegacyDepositionIdentifiers[] = [];
+    for (let page = 1; ; page += 1) {
+      const params = new URLSearchParams({
+        page: String(page),
+        size: String(pageSize)
+      });
+      const response = await this.request(`${this.endpoint}/api/deposit/depositions?${params.toString()}`, {
+        method: 'GET',
+        headers: authHeaders(token)
+      });
+      const parsedPage = parseUnsubmittedDepositionPage(await response.json());
+      depositions.push(...parsedPage.depositions);
+      if (parsedPage.rawCount < pageSize) return depositions;
+    }
   }
 
   private async createEmptyDeposition(token: string): Promise<ZenodoDeposition> {
@@ -344,6 +417,111 @@ export class ZenodoApiClient {
     });
   }
 
+  private async openInvenioEditDraft(token: string, recordId: string): Promise<InvenioRecordDraft> {
+    const response = await this.request(`${this.endpoint}/api/records/${encodeURIComponent(recordId)}/draft`, {
+      method: 'POST',
+      headers: invenioHeaders(token)
+    });
+    return parseInvenioRecordDraft(await response.json());
+  }
+
+  private async unlockInvenioDraftFileModification(token: string, draft: InvenioRecordDraft, recordId: string): Promise<void> {
+    await this.request(draft.fileModificationUrl ?? `${this.endpoint}/api/records/${encodeURIComponent(recordId)}/file-modification`, {
+      method: 'POST',
+      headers: jsonHeadersWithAccept(token, ZENODO_INVENIORDM_ACCEPT),
+      body: '{}'
+    });
+  }
+
+  private async replaceInvenioDraftFiles(token: string, recordId: string, files: readonly ZenodoUploadFile[]): Promise<void> {
+    const currentFiles = await this.listInvenioDraftFiles(token, recordId);
+    const uniqueFiles = uniqueZenodoFileKeys(files);
+    const desiredFileSet = new Set(uniqueFiles.map((file) => file.filename));
+
+    for (const file of uniqueFiles) {
+      const draftFile = await this.prepareWritableInvenioDraftFile(token, recordId, currentFiles, file);
+      if (!draftFile) continue;
+      await this.uploadInvenioDraftFileContent(token, draftFile, file.bytes);
+      await this.commitInvenioDraftFile(token, draftFile);
+    }
+
+    for (const file of currentFiles) {
+      if (desiredFileSet.has(file.key)) continue;
+      await this.deleteInvenioDraftFile(token, file);
+    }
+  }
+
+  private async prepareWritableInvenioDraftFile(
+    token: string,
+    recordId: string,
+    currentFiles: readonly InvenioDraftFile[],
+    file: ZenodoUploadFile
+  ): Promise<InvenioDraftFile | null> {
+    const existingWritable = findWritableInvenioDraftFile(currentFiles, file.filename);
+    if (existingWritable) return existingWritable;
+    if (findCompletedMatchingInvenioDraftFile(currentFiles, file)) return null;
+
+    try {
+      return await this.createInvenioDraftFile(token, recordId, file.filename);
+    } catch (error) {
+      if (!isInvenioDraftFileAlreadyExistsError(error)) throw error;
+      const refreshedFiles = await this.listInvenioDraftFiles(token, recordId);
+      const refreshedWritable = findWritableInvenioDraftFile(refreshedFiles, file.filename);
+      if (refreshedWritable) return refreshedWritable;
+      if (findCompletedMatchingInvenioDraftFile(refreshedFiles, file)) return null;
+
+      const existingSameKey = refreshedFiles.find((entry) => entry.key === file.filename);
+      if (!existingSameKey) throw error;
+      await this.deleteInvenioDraftFile(token, existingSameKey);
+      return this.createInvenioDraftFile(token, recordId, file.filename);
+    }
+  }
+
+  private async listInvenioDraftFiles(token: string, recordId: string): Promise<readonly InvenioDraftFile[]> {
+    const response = await this.request(`${this.endpoint}/api/records/${encodeURIComponent(recordId)}/draft/files`, {
+      method: 'GET',
+      headers: invenioHeaders(token)
+    });
+    return parseInvenioDraftFiles(await response.json());
+  }
+
+  private async createInvenioDraftFile(token: string, recordId: string, filename: string): Promise<InvenioDraftFile> {
+    const response = await this.request(`${this.endpoint}/api/records/${encodeURIComponent(recordId)}/draft/files`, {
+      method: 'POST',
+      headers: jsonHeadersWithAccept(token, ZENODO_INVENIORDM_ACCEPT),
+      body: JSON.stringify([{ key: filename }])
+    });
+    const file = findWritableInvenioDraftFile(parseInvenioDraftFiles(await response.json()), filename)
+      ?? findWritableInvenioDraftFile(await this.listInvenioDraftFiles(token, recordId), filename);
+    if (!file) throw new Error(`Zenodo draft file create response did not include a writable ${filename}`);
+    return file;
+  }
+
+  private async uploadInvenioDraftFileContent(token: string, file: InvenioDraftFile, bytes: Uint8Array): Promise<void> {
+    await this.request(file.links.content, {
+      method: 'PUT',
+      headers: {
+        ...invenioHeaders(token),
+        'Content-Type': 'application/octet-stream'
+      },
+      body: new Blob([copyToArrayBuffer(bytes)], { type: 'application/octet-stream' })
+    });
+  }
+
+  private async commitInvenioDraftFile(token: string, file: InvenioDraftFile): Promise<void> {
+    await this.request(file.links.commit, {
+      method: 'POST',
+      headers: invenioHeaders(token)
+    });
+  }
+
+  private async deleteInvenioDraftFile(token: string, file: InvenioDraftFile): Promise<void> {
+    await this.request(file.links.self, {
+      method: 'DELETE',
+      headers: invenioHeaders(token)
+    }, { allowedStatuses: [404] });
+  }
+
   private async publishDeposition(token: string, depositionId: string, fallbackRecordId: string): Promise<string> {
     const response = await this.request(`${this.endpoint}/api/deposit/depositions/${encodeURIComponent(depositionId)}/actions/publish`, {
       method: 'POST',
@@ -415,6 +593,7 @@ export class ZenodoApiClient {
 interface ZenodoDeposition {
   readonly id: string;
   readonly recordId: string;
+  readonly parentId?: string;
   readonly bucketUrl?: string;
   readonly latestDraftUrl?: string;
   readonly metadata?: Readonly<Record<string, JsonValue>>;
@@ -446,8 +625,13 @@ function withPayloadSnapshot(draft: ZenodoPreparedDraft, payload: JsonValue | Ze
 }
 
 function jsonHeaders(token: string): HeadersInit {
+  return jsonHeadersWithAccept(token);
+}
+
+function jsonHeadersWithAccept(token: string, accept?: string): HeadersInit {
   return {
     ...authHeaders(token),
+    ...(accept ? { Accept: accept } : {}),
     'Content-Type': 'application/json'
   };
 }
@@ -458,12 +642,20 @@ function authHeaders(token: string): HeadersInit {
   };
 }
 
+function invenioHeaders(token: string): HeadersInit {
+  return {
+    ...authHeaders(token),
+    Accept: ZENODO_INVENIORDM_ACCEPT
+  };
+}
+
 function parseDeposition(response: unknown): ZenodoDeposition {
   const deposition = asRecord(response);
   if (!deposition) throw new Error('Expected Zenodo deposition response object');
 
   const id = idString(deposition['id']);
   const recordId = idString(deposition['record_id']) ?? id;
+  const parentId = idString(deposition['conceptrecid']);
   if (!id || !recordId) throw new Error('Expected Zenodo deposition id and record_id');
 
   const links = asRecord(deposition['links']) ?? {};
@@ -474,6 +666,7 @@ function parseDeposition(response: unknown): ZenodoDeposition {
   return {
     id,
     recordId,
+    ...(parentId ? { parentId } : {}),
     ...(bucketUrl ? { bucketUrl } : {}),
     ...(latestDraftUrl ? { latestDraftUrl } : {}),
     ...(metadata ? { metadata } : {})
@@ -487,6 +680,45 @@ function parseOptionalJsonObject(value: unknown): Readonly<Record<string, JsonVa
   const jsonObject = asJsonObject(json);
   if (!jsonObject) throw new Error('Expected Zenodo deposition metadata object');
   return jsonObject;
+}
+
+interface UnsubmittedDepositionPage {
+  readonly rawCount: number;
+  readonly depositions: readonly ZenodoLegacyDepositionIdentifiers[];
+}
+
+interface InvenioRecordDraft {
+  readonly id: string;
+  readonly parentId?: string;
+  readonly fileModificationUrl?: string;
+}
+
+interface InvenioDraftFile {
+  readonly key: string;
+  readonly status?: string;
+  readonly fileId?: string;
+  readonly checksum?: string;
+  readonly size?: number;
+  readonly links: {
+    readonly self: string;
+    readonly content: string;
+    readonly commit: string;
+  };
+}
+
+function parseUnsubmittedDepositionPage(response: unknown): UnsubmittedDepositionPage {
+  if (!Array.isArray(response)) throw new Error('Expected Zenodo deposition list response array');
+  return {
+    rawCount: response.length,
+    depositions: response.flatMap((entry) => {
+      const deposition = parseZenodoLegacyDepositionIdentifiers(entry);
+      return deposition ? [deposition] : [];
+    })
+  };
+}
+
+function normalizeDoiForExactMatch(value: string | undefined): string {
+  return value?.trim().toLowerCase() ?? '';
 }
 
 function parsePublishedRecordsForExactDoi(response: unknown, doi: string): readonly ZenodoPublishedRecordVerification[] {
@@ -519,7 +751,17 @@ function escapeZenodoSearchPhrase(value: string): string {
 function toPreparedDraft(deposition: ZenodoDeposition): ZenodoPreparedDraft {
   return {
     depositionId: deposition.id,
-    draftRecordId: deposition.recordId
+    draftRecordId: deposition.recordId,
+    ...(deposition.parentId ? { parentId: deposition.parentId } : {})
+  };
+}
+
+function toInvenioPreparedDraft(record: InvenioRecordDraft): ZenodoPreparedDraft {
+  return {
+    depositionId: record.id,
+    draftRecordId: record.id,
+    ...(record.parentId ? { parentId: record.parentId } : {}),
+    api: 'invenio_record'
   };
 }
 
@@ -541,6 +783,101 @@ function parseDepositionFiles(response: unknown): readonly ZenodoDepositionFile[
     if (!filename) throw new Error('Expected Zenodo deposition file filename');
     return { id, filename };
   });
+}
+
+function parseInvenioRecordDraft(response: unknown): InvenioRecordDraft {
+  const record = asRecord(response);
+  if (!record) throw new Error('Expected Zenodo InvenioRDM draft response object');
+  const id = idString(record['id']);
+  if (!id) throw new Error('Expected Zenodo InvenioRDM draft id');
+  const parent = asRecord(record['parent']);
+  const parentId = idString(parent?.['id']);
+  const links = asRecord(record['links']) ?? {};
+  const fileModificationUrl = asString(links['file_modification']);
+  return {
+    id,
+    ...(parentId ? { parentId } : {}),
+    ...(fileModificationUrl ? { fileModificationUrl } : {})
+  };
+}
+
+function parseInvenioDraftFiles(response: unknown): readonly InvenioDraftFile[] {
+  return parseInvenioDraftFileEntries(response).map((entry) => parseInvenioDraftFile(entry));
+}
+
+function parseInvenioDraftFileEntries(response: unknown): readonly unknown[] {
+  if (Array.isArray(response)) return response;
+  const object = asRecord(response);
+  if (!object) throw new Error('Expected Zenodo draft files response object or array');
+  const entries = object['entries'];
+  if (Array.isArray(entries)) return entries;
+  const entriesRecord = asRecord(entries);
+  return entriesRecord ? Object.values(entriesRecord) : [];
+}
+
+function parseInvenioDraftFile(response: unknown): InvenioDraftFile {
+  const file = asRecord(response);
+  if (!file) throw new Error('Expected Zenodo draft file response object');
+  const key = asString(file['key']);
+  const status = asString(file['status']);
+  const fileId = asString(file['file_id']);
+  const checksum = asString(file['checksum']);
+  const size = asNumber(file['size']);
+  const links = asRecord(file['links']);
+  const self = asString(links?.['self']);
+  const content = asString(links?.['content']);
+  const commit = asString(links?.['commit']);
+  if (!key || !self || !content || !commit) {
+    throw new Error('Expected Zenodo draft file key and self/content/commit links');
+  }
+  return {
+    key,
+    ...(status ? { status } : {}),
+    ...(fileId ? { fileId } : {}),
+    ...(checksum ? { checksum } : {}),
+    ...(size === undefined ? {} : { size }),
+    links: {
+      self,
+      content,
+      commit
+    }
+  };
+}
+
+function findWritableInvenioDraftFile(files: readonly InvenioDraftFile[], filename: string): InvenioDraftFile | undefined {
+  return files.find((file) => file.key === filename && isWritableInvenioDraftFile(file));
+}
+
+function isWritableInvenioDraftFile(file: InvenioDraftFile): boolean {
+  return file.status === 'pending' || file.fileId === undefined;
+}
+
+function findCompletedMatchingInvenioDraftFile(files: readonly InvenioDraftFile[], upload: ZenodoUploadFile): InvenioDraftFile | undefined {
+  return files.find((file) => file.key === upload.filename && !isWritableInvenioDraftFile(file) && completedInvenioDraftFileMatches(file, upload));
+}
+
+function completedInvenioDraftFileMatches(file: InvenioDraftFile, upload: ZenodoUploadFile): boolean {
+  return file.size === upload.bytes.byteLength && normalizeChecksum(file.checksum) === md5Checksum(upload.bytes);
+}
+
+function normalizeChecksum(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return normalized.startsWith('md5:') ? normalized : `md5:${normalized}`;
+}
+
+function md5Checksum(bytes: Uint8Array): string {
+  return `md5:${createHash('md5').update(bytes).digest('hex')}`;
+}
+
+function isInvenioDraftFileAlreadyExistsError(error: unknown): boolean {
+  return error instanceof ProviderHttpError
+    && error.status === 400
+    && /file with key .+ already exists/i.test(error.body);
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function uniqueZenodoFileKeys(files: readonly ZenodoUploadFile[]): readonly ZenodoUploadFile[] {

@@ -12,6 +12,7 @@ export type DryRunAction =
   | { readonly kind: 'would_update_unpublished_zenodo_draft'; readonly depositionId: string; readonly payloadHash: string }
   | { readonly kind: 'would_adopt_legacy_zenodo_deposition'; readonly depositionId: string; readonly payloadHash: string; readonly fileManifestHash: string }
   | { readonly kind: 'would_update_zenodo_metadata'; readonly payloadHash: string }
+  | { readonly kind: 'would_update_zenodo_files'; readonly payloadHash: string; readonly fileManifestHash: string; readonly removedAttachmentKeys: readonly string[] }
   | { readonly kind: 'would_create_zenodo_version'; readonly payloadHash: string; readonly fileManifestHash: string; readonly removedAttachmentKeys: readonly string[] }
   | {
       readonly kind: 'would_publish_journaled_zenodo_draft';
@@ -105,6 +106,13 @@ function describeOperation(operation: SyncOperation): DryRunAction {
       };
     case 'zenodo_metadata_update':
       return { kind: 'would_update_zenodo_metadata', payloadHash: operation.payloadHash };
+    case 'zenodo_file_update':
+      return {
+        kind: 'would_update_zenodo_files',
+        payloadHash: operation.payloadHash,
+        fileManifestHash: operation.fileManifestHash,
+        removedAttachmentKeys: operation.removedAttachmentKeys
+      };
     case 'zenodo_new_version':
       return {
         kind: 'would_create_zenodo_version',

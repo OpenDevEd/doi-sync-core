@@ -160,11 +160,11 @@ describe('sync state settlement', () => {
     });
   });
 
-  it('advances metadata + Crossref but never the file hash for an attention-flagged external-crossref record', () => {
+  it('advances metadata + Crossref but never the file hash for an attention-flagged file conflict record', () => {
     const observedAt = new Date('2026-05-20T00:00:00.000Z');
     const plan: SyncPlan = {
       status: 'write_required',
-      attention: { reason: 'EXTERNAL_CROSSREF_ZENODO_VERSION_UNSUPPORTED' },
+      attention: { reason: 'ZOTERO_FILE_CONFLICT' },
       operations: [
         { type: 'crossref_redeposit', payloadHash: 'crossref-new' },
         { type: 'zenodo_metadata_update', payloadHash: 'zenodo-new' }
