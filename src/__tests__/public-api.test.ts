@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 import * as publicApi from '../index.js';
+import * as displayApi from '../display.js';
 
 const expectedRuntimeExports = [
   'CrossrefApiClient',
@@ -54,5 +55,18 @@ describe('public API surface', () => {
     const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
 
     expect(indexSource).not.toMatch(/export\s+\*/);
+  });
+
+  it('keeps browser-safe display helpers on a dedicated subpath', () => {
+    const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+      readonly exports?: Record<string, unknown>;
+    };
+
+    expect(packageJson.exports?.['./display']).toEqual({
+      types: './dist/display.d.ts',
+      import: './dist/display.js'
+    });
+    expect(Object.keys(displayApi).sort()).toEqual(['buildDoiDisplayLinks']);
+    expect(Object.keys(publicApi)).not.toContain('buildDoiDisplayLinks');
   });
 });
