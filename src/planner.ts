@@ -1,4 +1,4 @@
-import { analyzeDoiDrift, normalizeDoi } from './doi.js';
+import { normalizeDoi, type DoiDriftResult } from './doi.js';
 import type { CrossrefRelation } from './crossref/xml.js';
 import { buildFileManifest, DEFAULT_ZOTERO_PDF_TAGS, diffFileManifest, type FileManifest, type ZoteroChildItem } from './files.js';
 import { asRecord, asString } from './guards.js';
@@ -8,6 +8,7 @@ import { buildCanonicalMetadataSnapshot, type CanonicalMetadataSnapshot, type Zo
 import { changesZenodoVersionDoi } from './operations.js';
 import { buildSyncPayloadSnapshots } from './snapshots.js';
 import { planZoteroIdentifierLinkReconciliation } from './zotero/identifier-links.js';
+import { analyzeZoteroDoiDrift } from './zotero/doi.js';
 import { buildZoteroWritebackData, buildZoteroWritebackIdentifiers, planZoteroWriteback } from './zotero/writeback.js';
 import { effectiveZenodoDoiPolicy } from './zenodo/doi-policy.js';
 import type { ZenodoPublishJournalOperationType } from './zenodo/journal.js';
@@ -122,7 +123,7 @@ export type SyncAttention =
 
 export type SyncPlan =
   | { readonly status: 'skipped'; readonly reason: 'DOI_NOT_ACTIVE' | 'MISSING_REQUIRED_IDENTIFIERS' }
-  | { readonly status: 'needs_attention'; readonly reason: 'DOI_DRIFT'; readonly operations: readonly []; readonly drift: ReturnType<typeof analyzeDoiDrift> }
+  | { readonly status: 'needs_attention'; readonly reason: 'DOI_DRIFT'; readonly operations: readonly []; readonly drift: DoiDriftResult }
   | { readonly status: 'needs_attention'; readonly reason: 'ZOTERO_ITEM_DELETED'; readonly operations: readonly [] }
   | { readonly status: 'needs_attention'; readonly reason: 'ZOTERO_FILE_CONFLICT'; readonly operations: readonly [] }
   | { readonly status: 'needs_attention'; readonly reason: 'ZENODO_DOI_ALREADY_EXISTS_UNRESOLVED'; readonly operations: readonly [] }
@@ -155,7 +156,7 @@ export function planRecordSync(input: PlanRecordSyncInput): SyncPlan {
     };
   }
 
-  const drift = analyzeDoiDrift({
+  const drift = analyzeZoteroDoiDrift({
     recordDoi: input.record.crossrefDoi,
     zoteroDoi: data.DOI,
     zoteroLowercaseDoi: data.doi,

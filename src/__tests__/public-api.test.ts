@@ -17,6 +17,7 @@ const expectedRuntimeExports = [
   'ZOTERO_ZENODO_UPLOADED_TAG',
   'ZenodoApiClient',
   'ZoteroApiClient',
+  'analyzeDoiDrift',
   'auditCrossrefDepositMetadata',
   'auditZenodoWritePayloadMetadata',
   'buildCanonicalMetadataSnapshot',
@@ -42,8 +43,10 @@ const expectedRuntimeExports = [
   'prepareDoiSync',
   'recoverZenodoFileStateFromSnapshot',
   'resolveCanonicalZoteroRecord',
+  'resolveDoiCandidates',
   'resolveZenodoSyncState',
-  'settleLiveSyncPlan'
+  'settleLiveSyncPlan',
+  'normalizeDoi'
 ].sort();
 
 describe('public API surface', () => {
@@ -68,5 +71,6 @@ describe('public API surface', () => {
     });
     expect(Object.keys(displayApi).sort()).toEqual(['buildDoiDisplayLinks']);
     expect(Object.keys(publicApi)).not.toContain('buildDoiDisplayLinks');
+    expect(readFileSync(new URL('../display.ts', import.meta.url), 'utf8')).not.toMatch(/zotero/i);
   });
 });

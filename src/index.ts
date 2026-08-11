@@ -20,6 +20,16 @@ export type {
 } from './crossref/response.js';
 export type { CrossrefIdentifierType, CrossrefRelation, CrossrefRelationType } from './crossref/xml.js';
 
+/** Provider-neutral DOI normalization, resolution, and drift analysis. */
+export { analyzeDoiDrift, normalizeDoi, resolveDoiCandidates } from './doi.js';
+export type {
+  DoiCandidate,
+  DoiConflict,
+  DoiDriftInput,
+  DoiDriftResult,
+  ResolvedDoi
+} from './doi.js';
+
 /** Dry-run description builder used to render planned provider actions without writes. */
 export { describeDryRunExecution } from './executor/dry-run-executor.js';
 export type {

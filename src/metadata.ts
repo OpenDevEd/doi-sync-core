@@ -1,4 +1,4 @@
-import { resolveCrossrefDoi } from './doi.js';
+import { resolveZoteroCrossrefDoi } from './zotero/doi.js';
 import { compareCodeUnits } from './sort.js';
 
 export interface ZoteroCreator {
@@ -78,7 +78,7 @@ export interface BuildCanonicalMetadataInput {
 /** Normalizes a Zotero parent item into the canonical metadata shared by Crossref and Zenodo. */
 export function buildCanonicalMetadataSnapshot(input: BuildCanonicalMetadataInput): CanonicalMetadataSnapshot {
   const data = input.zoteroItem.data;
-  const resolvedDoi = resolveCrossrefDoi({
+  const resolvedDoi = resolveZoteroCrossrefDoi({
     recordDoi: input.recordDoi,
     zoteroDoi: data.DOI,
     zoteroLowercaseDoi: data.doi,
