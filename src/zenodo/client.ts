@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { buildZenodoWritePayload, parseZenodoLegacyDepositionIdentifiers, parseZenodoRecordIdentifiers, parseZenodoRecordSnapshot, ZENODO_INVENIORDM_ACCEPT, type DoiPolicy, type ZenodoDoiLookupResult, type ZenodoLegacyDepositionIdentifiers, type ZenodoLegacyDepositionPayload, type ZenodoPublishedRecordVerification, type ZenodoRecordIdentifiers, type ZenodoRecordSnapshot, type ZenodoUnsubmittedDraftDoiLookupResult, type ZenodoVerificationResult } from './records.js';
-import type { ZenodoPreparedDraft } from './journal.js';
-import type { CanonicalMetadataSnapshot } from '../metadata.js';
+import type { ZenodoPreparedDraft, ZenodoPublishJournalOperationType } from './journal.js';
+import type { PublicationProviderMetadata } from '../publication/record.js';
 import { asJsonObject, toJsonValue } from '../json.js';
 import type { JsonValue } from '../hash.js';
 import { ProviderHttpError, retryAfterMsFromHeaders, type ProviderResponseHeaders } from '../resilience/errors.js';
@@ -51,10 +51,8 @@ export interface ZenodoUploadFile {
 export interface ZenodoCreateRecordInput {
   readonly token: string;
   readonly doiPolicy: DoiPolicy;
-  readonly metadata: CanonicalMetadataSnapshot;
+  readonly metadata: PublicationProviderMetadata;
   readonly files: readonly ZenodoUploadFile[];
-  /** Zotero `zotero://select/...` URL emitted into the legacy Zenodo deposition `related_identifiers` write payload. */
-  readonly zoteroSelectUrl?: string;
   /** Public resource URL appended idempotently to the Zenodo `description`. */
   readonly resourceUrl?: string;
   /** Called as soon as Zenodo returns a draft/deposition id, before later mutable steps can fail. */
@@ -69,9 +67,7 @@ export interface ZenodoUpdateRecordMetadataInput {
   readonly token: string;
   readonly latestRecordId: string;
   readonly doiPolicy: DoiPolicy;
-  readonly metadata: CanonicalMetadataSnapshot;
-  /** Zotero `zotero://select/...` URL emitted into the legacy Zenodo deposition `related_identifiers` write payload. */
-  readonly zoteroSelectUrl?: string;
+  readonly metadata: PublicationProviderMetadata;
   /** Public resource URL appended idempotently to the Zenodo `description`. */
   readonly resourceUrl?: string;
   /** Called as soon as Zenodo returns a draft/deposition id, before later mutable steps can fail. */
@@ -87,6 +83,12 @@ export type ZenodoUpdateRecordFilesInput = ZenodoCreateNewVersionInput;
 export interface DeleteZenodoUnpublishedDraftInput {
   readonly token: string;
   readonly depositionId: string;
+}
+
+export interface DiscardZenodoPreparedDraftInput {
+  readonly token: string;
+  readonly operationType: ZenodoPublishJournalOperationType;
+  readonly draft: ZenodoPreparedDraft;
 }
 
 /** Creates, updates, verifies, and publishes Zenodo records for the supported DOI policies. */
@@ -205,14 +207,34 @@ export class ZenodoApiClient {
     await this.deleteUnpublishedDeposition(input.token, input.depositionId);
   }
 
+  async discardPreparedDraft(input: DiscardZenodoPreparedDraftInput): Promise<void> {
+    if (input.operationType === 'zenodo_file_update' || input.draft.api === 'invenio_record') {
+      await this.request(
+        `${this.endpoint}/api/records/${encodeURIComponent(input.draft.draftRecordId)}/draft`,
+        { method: 'DELETE', headers: invenioHeaders(input.token) },
+        { allowedStatuses: [404] }
+      );
+      return;
+    }
+    if (input.operationType === 'zenodo_metadata_update') {
+      await this.request(
+        `${this.endpoint}/api/deposit/depositions/${encodeURIComponent(input.draft.depositionId)}/actions/discard`,
+        { method: 'POST', headers: authHeaders(input.token) },
+        { allowedStatuses: [400, 404] }
+      );
+      return;
+    }
+    await this.deleteUnpublishedDeposition(input.token, input.draft.depositionId);
+  }
+
   async prepareCreateRecord(input: ZenodoCreateRecordInput): Promise<ZenodoPreparedDraft> {
     const deposition = await this.createEmptyDeposition(input.token);
     const draft = toPreparedDraft(deposition);
     await this.notifyPreparedDraft(draft, input.onPreparedDraft, () => this.deleteUnpublishedDeposition(input.token, deposition.id));
     await this.uploadFilesToBucket(input.token, deposition, input.files);
-    const payload = buildDepositionPayload(deposition, input);
-    await this.updateDepositionMetadata(input.token, deposition.id, payload);
-    return withPayloadSnapshot(draft, payload);
+    const payloads = buildDepositionPayloads(deposition, input);
+    await this.updateDepositionMetadata(input.token, deposition.id, payloads.wire);
+    return withPayloadSnapshot(draft, payloads.managed);
   }
 
   async prepareAdoptLegacyDeposition(input: ZenodoAdoptLegacyDepositionInput): Promise<ZenodoPreparedDraft> {
@@ -220,18 +242,18 @@ export class ZenodoApiClient {
     const draft = toPreparedDraft(deposition);
     await input.onPreparedDraft?.(draft);
     await this.replaceLegacyDepositionFiles(input.token, deposition, input.files);
-    const payload = buildDepositionPayload(deposition, input);
-    await this.updateDepositionMetadata(input.token, deposition.id, payload);
-    return withPayloadSnapshot(draft, payload);
+    const payloads = buildDepositionPayloads(deposition, input);
+    await this.updateDepositionMetadata(input.token, deposition.id, payloads.wire);
+    return withPayloadSnapshot(draft, payloads.managed);
   }
 
   async prepareUpdateRecordMetadata(input: ZenodoUpdateRecordMetadataInput): Promise<ZenodoPreparedDraft> {
     const editable = await this.postDepositionAction(input.token, input.latestRecordId, 'edit');
     const draft = toPreparedDraft(editable);
     await input.onPreparedDraft?.(draft);
-    const payload = buildDepositionPayload(editable, input);
-    await this.updateDepositionMetadata(input.token, editable.id, payload);
-    return withPayloadSnapshot(draft, payload);
+    const payloads = buildDepositionPayloads(editable, input);
+    await this.updateDepositionMetadata(input.token, editable.id, payloads.wire);
+    return withPayloadSnapshot(draft, payloads.managed);
   }
 
   async prepareNewVersion(input: ZenodoCreateNewVersionInput): Promise<ZenodoPreparedDraft> {
@@ -240,9 +262,9 @@ export class ZenodoApiClient {
     const preparedDraft = toPreparedDraft(draft);
     await input.onPreparedDraft?.(preparedDraft);
     await this.replaceLegacyDepositionFiles(input.token, draft, input.files);
-    const payload = buildDepositionPayload(draft, input);
-    await this.updateDepositionMetadata(input.token, draft.id, payload);
-    return withPayloadSnapshot(preparedDraft, payload);
+    const payloads = buildDepositionPayloads(draft, input);
+    await this.updateDepositionMetadata(input.token, draft.id, payloads.wire);
+    return withPayloadSnapshot(preparedDraft, payloads.managed);
   }
 
   async prepareUpdateRecordFiles(input: ZenodoUpdateRecordFilesInput): Promise<ZenodoPreparedDraft> {
@@ -604,17 +626,25 @@ interface ZenodoDepositionFile {
   readonly filename: string;
 }
 
-function buildDepositionPayload(
+function buildDepositionPayloads(
   deposition: ZenodoDeposition,
   input: ZenodoCreateRecordInput | ZenodoUpdateRecordMetadataInput
-): ZenodoLegacyDepositionPayload {
-  return buildZenodoWritePayload({
+): {
+  readonly wire: ZenodoLegacyDepositionPayload;
+  readonly managed: ZenodoLegacyDepositionPayload;
+} {
+  const managed = buildZenodoWritePayload({
+    doiPolicy: input.doiPolicy,
+    metadata: input.metadata,
+    ...(input.resourceUrl ? { resourceUrl: input.resourceUrl } : {})
+  });
+  const wire = buildZenodoWritePayload({
     doiPolicy: input.doiPolicy,
     metadata: input.metadata,
     ...(deposition.metadata ? { existingMetadata: deposition.metadata } : {}),
-    ...(input.zoteroSelectUrl ? { zoteroSelectUrl: input.zoteroSelectUrl } : {}),
     ...(input.resourceUrl ? { resourceUrl: input.resourceUrl } : {})
   });
+  return { wire, managed };
 }
 
 function withPayloadSnapshot(draft: ZenodoPreparedDraft, payload: JsonValue | ZenodoLegacyDepositionPayload): ZenodoPreparedDraft {

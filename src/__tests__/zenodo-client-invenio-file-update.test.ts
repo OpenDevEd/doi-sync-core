@@ -99,10 +99,11 @@ describe('ZenodoApiClient published external DOI file modification', () => {
       doiPolicy: 'external-crossref',
       metadata: {
         doi: '10.53832/doi-sync-file-edit-probe',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Probe report',
         publicationDate: '2026-06-04',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: [
@@ -220,10 +221,11 @@ describe('ZenodoApiClient published external DOI file modification', () => {
       doiPolicy: 'external-crossref',
       metadata: {
         doi: '10.53832/doi-sync-file-edit-probe',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Probe report',
         publicationDate: '2026-06-04',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: [{

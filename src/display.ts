@@ -116,8 +116,10 @@ function normalizeRecordId(value: string | number | null | undefined): string | 
     return Number.isSafeInteger(value) && value > 0 ? String(value) : null;
   }
 
-  const trimmed = value?.trim();
-  return trimmed && /^\d+$/u.test(trimmed) ? trimmed : null;
+	const trimmed = value?.trim();
+	if (!trimmed || !/^\d+$/u.test(trimmed)) return null;
+	const parsed = Number(trimmed);
+	return Number.isSafeInteger(parsed) && parsed > 0 ? String(parsed) : null;
 }
 
 function normalizeBaseUrl(value: string | null | undefined): string | null {

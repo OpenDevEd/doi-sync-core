@@ -1,7 +1,7 @@
 {
   "name": "@opendeved/doi-sync-core",
   "version": "0.1.0",
-  "description": "Pure Zotero, Crossref, and Zenodo DOI sync logic shared by OpenDevEd services.",
+  "description": "Provider-neutral Crossref and Zenodo publication sync logic shared by OpenDevEd services.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,11 +26,14 @@
   "scripts": {
     "clean": "node -e \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\"",
     "build": "npm run clean && tsc -p tsconfig.build.json",
+	"crossref:languages:generate": "node scripts/generate-crossref-languages.mjs",
+	"crossref:languages:check": "node scripts/generate-crossref-languages.mjs --check",
+	"zenodo:licenses:generate": "node scripts/generate-zenodo-licenses.mjs",
     "lint": "eslint \"src/**/*.ts\" vitest.config.ts",
     "prepare": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run lint && npm run typecheck && npm test && npm run build"
+    "verify": "npm run crossref:languages:check && npm run lint && npm run typecheck && npm test && npm run build"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -38,6 +41,7 @@
   "dependencies": {
     "bottleneck": "^2.19.5",
     "fast-xml-parser": "^5.8.0",
+    "iso-639-3": "^3.0.1",
     "p-retry": "^8.0.0",
     "xmlbuilder2": "^4.0.3",
     "zod": "^4.4.3"

@@ -1,67 +1,56 @@
 import { describe, expect, it } from 'vitest';
-import { describeDryRunExecution } from '../executor/dry-run-executor.js';
-import type { SyncPlan } from '../planner.js';
 
-describe('dry-run executor description', () => {
-  it('turns write-required operations into non-mutating action descriptions', () => {
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [
-        { type: 'crossref_redeposit', payloadHash: 'crossref-hash' },
-        { type: 'zenodo_create', payloadHash: 'zenodo-hash', fileManifestHash: 'files-hash' },
-        {
-          type: 'zenodo_legacy_deposition_adopt',
-          depositionId: '17585551',
-          payloadHash: 'legacy-hash',
-          fileManifestHash: 'legacy-files-hash'
-        },
-        { type: 'zotero_writeback' }
-      ],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'files-hash'
-      }
-    };
+import { describeDryRun } from '../executor/dry-run-executor.js';
+import { planPublicationSync } from '../planner.js';
 
-    expect(describeDryRunExecution({ recordId: 'rec-1', plan })).toEqual({
-      recordId: 'rec-1',
-      status: 'write_required',
-      actions: [
-        { kind: 'would_submit_crossref', payloadHash: 'crossref-hash' },
-        { kind: 'would_create_zenodo_record', payloadHash: 'zenodo-hash', fileManifestHash: 'files-hash' },
-        {
-          kind: 'would_adopt_legacy_zenodo_deposition',
-          depositionId: '17585551',
-          payloadHash: 'legacy-hash',
-          fileManifestHash: 'legacy-files-hash'
-        },
-        { kind: 'would_settle_zotero_writeback' }
-      ]
-    });
-  });
+describe('publication dry-run description', () => {
+	it('projects the exact provider-neutral operations without writes', () => {
+		const plan = planPublicationSync({
+			record: {
+				recordKey: 'ABC12345',
+				canonicalRevision: 1,
+				itemType: 'Report',
+				title: 'Evidence report',
+				publicationDate: '2026-05-20',
+				publisher: 'OpenDevEd',
+				creators: [],
+				tags: [],
+				landingUrl: 'https://example.org/items/ABC12345',
+				fields: {}
+			},
+			files: { files: [] },
+			identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+			targets: { crossref: { enabled: true, environment: 'test' }, zenodo: { enabled: false } }
+		});
 
-  it('preserves skipped and needs_attention plans without creating actions', () => {
-    expect(describeDryRunExecution({
-      recordId: 'rec-1',
-      plan: { status: 'skipped', reason: 'DOI_NOT_ACTIVE' }
-    })).toEqual({
-      recordId: 'rec-1',
-      status: 'skipped',
-      reason: 'DOI_NOT_ACTIVE',
-      actions: []
-    });
-  });
+		expect(describeDryRun(plan)).toMatchObject({
+			recordKey: 'ABC12345',
+			status: 'write_required',
+			actions: [{ kind: 'would_submit_crossref' }]
+		});
+	});
+
+	it('reports local waiting-for-file state without a remote action', () => {
+		const plan = planPublicationSync({
+			record: {
+				recordKey: 'ABC12345', canonicalRevision: 1, itemType: 'Report',
+				title: 'Evidence report', publicationDate: '2026-05-20', abstract: 'Evidence summary',
+				creators: [{ type: 'organizational', name: 'OpenDevEd' }], tags: [],
+				landingUrl: 'https://example.org/items/ABC12345', fields: {}
+			},
+			files: { files: [] },
+			identifiers: {},
+			targets: {
+				crossref: { enabled: false },
+				zenodo: { enabled: true, environment: 'sandbox', identifierPolicy: 'mint-zenodo' }
+			}
+		});
+
+		expect(describeDryRun(plan)).toEqual({
+			recordKey: 'ABC12345',
+			status: 'waiting_for_file',
+			waitingForFile: true,
+			actions: []
+		});
+	});
 });

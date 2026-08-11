@@ -37,12 +37,16 @@ describe('DOI display helpers', () => {
     expect(display.links).toEqual([display.crossrefDoi]);
   });
 
-  it('does not synthesize a Zenodo DOI from a record id', () => {
+	it('does not synthesize a Zenodo DOI from a record id', () => {
     const display = buildDoiDisplayLinks({ zenodoRecordId: 20350001 });
 
     expect(display.zenodoRecord?.url).toBe('https://zenodo.org/records/20350001');
-    expect(display.zenodoVersionDoi).toBeUndefined();
-  });
+		expect(display.zenodoVersionDoi).toBeUndefined();
+	});
+
+	it.each([0, '0', '000'])('rejects zero-like Zenodo record ids: %s', (recordId) => {
+		expect(buildDoiDisplayLinks({ zenodoRecordId: recordId })).toEqual({ links: [] });
+	});
 
   it('uses an explicit sandbox record base URL', () => {
     const display = buildDoiDisplayLinks({

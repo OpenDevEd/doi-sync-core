@@ -1,320 +1,317 @@
-import type { SyncOperation, SyncPlan } from './planner.js';
-import { isCrossrefOperation, isZenodoFileOperation } from './operations.js';
 import type { JsonValue } from './hash.js';
-import type { SyncPayloadSnapshots } from './snapshots.js';
-
-export interface ExternalSyncStatePatch {
-  readonly zoteroLastSeenAt?: Date;
-  readonly crossrefPayloadHash?: string | null;
-  readonly crossrefPayloadSnapshot?: JsonValue;
-  readonly crossrefPendingPayloadHash?: string | null;
-  readonly crossrefPendingPayloadSnapshot?: JsonValue | null;
-  readonly crossrefPendingBatchId?: string | null;
-  readonly crossrefPendingFilename?: string | null;
-  readonly crossrefPendingSubmittedAt?: Date | null;
-  readonly crossrefPendingReason?: string | null;
-  readonly zenodoPayloadHash?: string;
-  readonly zenodoPayloadSnapshot?: JsonValue;
-  readonly fileManifestHash?: string;
-  readonly fileManifestSnapshot?: JsonValue;
-  readonly zenodoLatestRecordId?: string;
-  readonly zenodoParentId?: string;
-  readonly zenodoConceptDoi?: string;
-  readonly zenodoVersionDoi?: string;
-  readonly driftDetectedAt?: Date | null;
-  readonly lastFailureClass?: string | null;
-  readonly lastFailureSummary?: string | null;
-  readonly consecutiveFailureCount?: number;
-}
-
-export interface SyncStateSettlement {
-  readonly statePatch: ExternalSyncStatePatch;
-}
-
-export type SyncOperationResult =
-  | {
-      readonly type: SyncOperation['type'];
-      readonly status: 'succeeded';
-      readonly zenodo?: ZenodoSettlementIdentifiers;
-      readonly zenodoAdoptionOnly?: boolean;
-      readonly zenodoOrphanDraftCleanup?: ZenodoOrphanDraftCleanup;
-      readonly zenodoPayloadSnapshot?: JsonValue;
-    }
-  | {
-      readonly type: SyncOperation['type'];
-      readonly status: 'skipped';
-      readonly reason: string;
-    }
-  | {
-      readonly type: SyncOperation['type'];
-      readonly status: 'pending';
-      readonly pendingClass: string;
-      readonly pendingSummary: string;
-      readonly crossref?: CrossrefPendingSettlement;
-    }
-  | {
-      readonly type: SyncOperation['type'];
-      readonly status: 'failed';
-      readonly failureClass: string;
-      readonly failureSummary: string;
-    };
-
-export interface ZenodoSettlementIdentifiers {
-  readonly latestRecordId: string;
-  readonly parentId: string;
-  readonly conceptDoi?: string;
-  readonly versionDoi?: string;
-}
-
-export type ZenodoOrphanDraftCleanup =
-  | {
-      readonly status: 'deleted';
-      readonly depositionId: string;
-    }
-  | {
-      readonly status: 'failed';
-      readonly depositionId: string;
-      readonly failureClass: string;
-      readonly failureSummary: string;
-    };
+import { isCrossrefOperation, isZenodoOperation } from './operations.js';
+import type { PublicationSyncOperation, PublicationSyncPlan } from './planner.js';
+import type { ProviderSyncState, ZenodoProviderIdentifiers } from './publication/state.js';
 
 export interface CrossrefPendingSettlement {
-  readonly batchId?: string;
-  readonly filename?: string;
-  readonly submittedAt?: Date;
+	readonly stage: 'relation_clear' | 'deposit';
+	readonly batchId?: string;
+	readonly filename?: string;
+	readonly submittedAt?: Date;
 }
 
-export interface SettleSyncStateInput {
-  readonly plan: SyncPlan;
-  readonly observedAt: Date;
-  readonly previousConsecutiveFailureCount?: number;
-  readonly previousCrossrefPendingBatchId?: string | null;
-  readonly previousCrossrefPendingFilename?: string | null;
-  readonly previousCrossrefPendingSubmittedAt?: Date | null;
-  readonly crossrefPendingMaxAgeMs?: number;
-  readonly operationResults?: readonly SyncOperationResult[];
-  readonly payloadSnapshots?: SyncPayloadSnapshots;
+export type ZenodoSettlementIdentifiers = ZenodoProviderIdentifiers;
+
+export interface ZenodoOrphanDraftCleanup {
+	readonly status: 'deleted' | 'failed';
+	readonly depositionId: string;
+	readonly failureClass?: string;
+	readonly failureSummary?: string;
 }
 
-export function settleSyncState(input: SettleSyncStateInput): SyncStateSettlement {
-  if (input.plan.status === 'needs_attention') {
-    return {
-      statePatch: {
-        zoteroLastSeenAt: input.observedAt,
-        driftDetectedAt: input.plan.reason === 'DOI_DRIFT' ? input.observedAt : null,
-        lastFailureClass: input.plan.reason,
-        lastFailureSummary: `Record is unsafe to sync: ${input.plan.reason}`,
-        consecutiveFailureCount: (input.previousConsecutiveFailureCount ?? 0) + 1
-      }
-    };
-  }
+export type PublicationSyncOperationResult =
+	| {
+		readonly type: PublicationSyncOperation['type'];
+		readonly status: 'succeeded';
+		readonly zenodo?: ZenodoSettlementIdentifiers;
+		readonly zenodoAdoptionOnly?: boolean;
+		readonly zenodoOrphanDraftCleanup?: ZenodoOrphanDraftCleanup;
+		readonly zenodoPayloadSnapshot?: JsonValue;
+	}
+	| {
+		readonly type: PublicationSyncOperation['type'];
+		readonly status: 'skipped';
+		readonly reason: string;
+	}
+	| {
+		readonly type: 'crossref_redeposit' | 'crossref_verify_pending';
+		readonly status: 'pending';
+		readonly pendingClass: string;
+		readonly pendingSummary: string;
+		readonly crossref: CrossrefPendingSettlement;
+	}
+	| {
+		readonly type: PublicationSyncOperation['type'];
+		readonly status: 'failed';
+		readonly failureClass: string;
+		readonly failureSummary: string;
+	};
 
-  const statePatch: MutableExternalSyncStatePatch = {
-    zoteroLastSeenAt: input.observedAt
-  };
-  if (input.plan.status === 'skipped') return { statePatch };
-
-  const results = input.operationResults ?? [];
-  const failedResult = results.find((result) => result.status === 'failed');
-  const pendingResult = results.find((result) => result.status === 'pending');
-  for (const operation of input.plan.operations) {
-    if (!didOperationSucceed(results, operation.type)) continue;
-
-    if (isCrossrefOperation(operation)) {
-      statePatch.crossrefPayloadHash = operation.payloadHash;
-      if (input.payloadSnapshots) statePatch.crossrefPayloadSnapshot = input.payloadSnapshots.crossrefPayload;
-      clearCrossrefPendingState(statePatch);
-    }
-
-    if (operation.type !== 'zenodo_publish_journaled_draft' && isZenodoFileOperation(operation)) {
-      const result = findSucceededResult(results, operation.type);
-      if (result?.zenodoAdoptionOnly === true) {
-        applyZenodoIdentifiersToPatch(statePatch, result.zenodo);
-        continue;
-      }
-      statePatch.zenodoPayloadHash = operation.payloadHash;
-      if (input.payloadSnapshots) statePatch.zenodoPayloadSnapshot = input.payloadSnapshots.zenodoPayload;
-      statePatch.fileManifestHash = operation.fileManifestHash;
-      if (input.payloadSnapshots) statePatch.fileManifestSnapshot = input.payloadSnapshots.fileManifest;
-      applyZenodoIdentifiersToPatch(statePatch, result?.zenodo);
-    }
-
-    if (operation.type === 'zenodo_metadata_update') {
-      const result = findSucceededResult(results, operation.type);
-      if (result?.zenodoAdoptionOnly === true) {
-        applyZenodoIdentifiersToPatch(statePatch, result.zenodo);
-        continue;
-      }
-      statePatch.zenodoPayloadHash = operation.payloadHash;
-      if (input.payloadSnapshots) statePatch.zenodoPayloadSnapshot = input.payloadSnapshots.zenodoPayload;
-      applyZenodoIdentifiersToPatch(statePatch, result?.zenodo);
-    }
-
-    if (operation.type === 'zenodo_publish_journaled_draft') {
-      const result = findSucceededResult(results, operation.type);
-      if (result?.zenodoAdoptionOnly === true) {
-        applyZenodoIdentifiersToPatch(statePatch, result.zenodo);
-        continue;
-      }
-      statePatch.zenodoPayloadHash = operation.payloadHash;
-      if (input.payloadSnapshots) statePatch.zenodoPayloadSnapshot = input.payloadSnapshots.zenodoPayload;
-      if (operation.fileManifestHash) {
-        statePatch.fileManifestHash = operation.fileManifestHash;
-        if (input.payloadSnapshots) statePatch.fileManifestSnapshot = input.payloadSnapshots.fileManifest;
-      }
-      applyZenodoIdentifiersToPatch(statePatch, result?.zenodo);
-    }
-  }
-
-  for (const operation of input.plan.operations) {
-    const pending = findPendingResult(results, operation.type);
-    if (!pending) continue;
-
-    if (isCrossrefOperation(operation)) {
-      statePatch.crossrefPendingPayloadHash = operation.payloadHash;
-      if (input.payloadSnapshots) statePatch.crossrefPendingPayloadSnapshot = input.payloadSnapshots.crossrefPayload;
-      statePatch.crossrefPendingBatchId = pending.crossref?.batchId ?? input.previousCrossrefPendingBatchId ?? null;
-      statePatch.crossrefPendingFilename = pending.crossref?.filename ?? input.previousCrossrefPendingFilename ?? null;
-      statePatch.crossrefPendingSubmittedAt = pending.crossref?.submittedAt ?? input.previousCrossrefPendingSubmittedAt ?? null;
-      statePatch.crossrefPendingReason = pending.pendingSummary;
-    }
-  }
-
-  if (failedResult) {
-    if (failedResult.type === 'crossref_redeposit' && failedResult.failureClass === 'CROSSREF_FAILED') {
-      clearCrossrefPendingState(statePatch);
-    }
-    return {
-      statePatch: {
-        ...statePatch,
-        driftDetectedAt: null,
-        lastFailureClass: failedResult.failureClass,
-        lastFailureSummary: failedResult.failureSummary,
-        consecutiveFailureCount: (input.previousConsecutiveFailureCount ?? 0) + 1
-      }
-    };
-  }
-
-  if (pendingResult) {
-    const staleCrossrefPending = staleCrossrefPendingFailure(input, pendingResult);
-    if (staleCrossrefPending) {
-      return {
-        statePatch: {
-          ...statePatch,
-          driftDetectedAt: null,
-          lastFailureClass: staleCrossrefPending.failureClass,
-          lastFailureSummary: staleCrossrefPending.failureSummary,
-          consecutiveFailureCount: (input.previousConsecutiveFailureCount ?? 0) + 1
-        }
-      };
-    }
-
-    // Don't clear the failure breadcrumb / reset backoff if a planned op produced no result at all
-    // (an incomplete run). An op counts as accounted-for if it succeeded, was skipped, or is itself
-    // pending (legitimately in progress); a missing result means the run did not finish. A FAILED
-    // sibling cannot reach here — it short-circuits in the failedResult branch above.
-    const everyOperationAccountedFor = input.plan.operations.every((operation) => (
-      didOperationComplete(results, operation.type) || Boolean(findPendingResult(results, operation.type))
-    ));
-    if (input.plan.status === 'write_required' && !everyOperationAccountedFor) {
-      return { statePatch };
-    }
-
-    return {
-      statePatch: {
-        ...statePatch,
-        driftDetectedAt: null,
-        lastFailureClass: null,
-        lastFailureSummary: null,
-        consecutiveFailureCount: 0
-      }
-    };
-  }
-
-  if (input.plan.status === 'write_required' && !input.plan.operations.every((operation) => didOperationComplete(results, operation.type))) {
-    return { statePatch };
-  }
-
-  return {
-    statePatch: {
-      ...statePatch,
-      driftDetectedAt: null,
-      lastFailureClass: null,
-      lastFailureSummary: null,
-      consecutiveFailureCount: 0
-    }
-  };
+export interface ProviderSyncStatePatch {
+	readonly crossref?: {
+		readonly environment: NonNullable<ProviderSyncState['crossref']>['environment'];
+		readonly lastSuccess?: NonNullable<ProviderSyncState['crossref']>['lastSuccess'];
+		readonly pending?: NonNullable<ProviderSyncState['crossref']>['pending'] | null;
+	};
+	readonly zenodo?: {
+		readonly environment: NonNullable<ProviderSyncState['zenodo']>['environment'];
+		readonly identifierPolicy: NonNullable<ProviderSyncState['zenodo']>['identifierPolicy'];
+		readonly lastSuccess?: NonNullable<ProviderSyncState['zenodo']>['lastSuccess'];
+		readonly identifiers?: ZenodoProviderIdentifiers;
+		readonly orphanDraftCleanup?: NonNullable<ProviderSyncState['zenodo']>['orphanDraftCleanup'] | null;
+	};
+	readonly failure?: ProviderSyncState['failure'] | null;
 }
 
-type MutableExternalSyncStatePatch = {
-  -readonly [Key in keyof ExternalSyncStatePatch]: ExternalSyncStatePatch[Key];
-};
-
-function didOperationSucceed(results: readonly SyncOperationResult[], operationType: SyncOperation['type']): boolean {
-  return Boolean(findSucceededResult(results, operationType));
+export interface SettlePublicationSyncInput {
+	readonly plan: PublicationSyncPlan;
+	readonly previousState?: ProviderSyncState;
+	readonly operationResults?: readonly PublicationSyncOperationResult[];
+	readonly observedAt: Date;
+	readonly crossrefPendingMaxAgeMs?: number;
 }
 
-function didOperationComplete(results: readonly SyncOperationResult[], operationType: SyncOperation['type']): boolean {
-  return results.some((result) => (
-    result.type === operationType && (result.status === 'succeeded' || result.status === 'skipped')
-  ));
+export interface PublicationSyncSettlement {
+	readonly statePatch: ProviderSyncStatePatch;
 }
 
-function findSucceededResult(
-  results: readonly SyncOperationResult[],
-  operationType: SyncOperation['type']
-): Extract<SyncOperationResult, { readonly status: 'succeeded' }> | undefined {
-  return results.find((result): result is Extract<SyncOperationResult, { readonly status: 'succeeded' }> => (
-    result.type === operationType && result.status === 'succeeded'
-  ));
+/** Advances only last-success provider state represented by successful operations. */
+export function settlePublicationSyncState(
+	input: SettlePublicationSyncInput
+): PublicationSyncSettlement {
+	if (input.plan.status === 'needs_attention') {
+		return {
+			statePatch: {
+				failure: nextFailure(input.previousState, input.plan.provider, input.plan.reason,
+					`Record is unsafe to sync: ${input.plan.reason}`)
+			}
+		};
+	}
+
+	if (input.plan.status === 'skipped' || input.plan.status === 'waiting_for_file') {
+		return { statePatch: {} };
+	}
+
+	const actionableInput = input as SettlePublicationSyncInput & {
+		readonly plan: Extract<PublicationSyncPlan, { readonly snapshots: unknown }>;
+	};
+	const results = input.operationResults ?? [];
+	const crossrefPatch = settleCrossref(actionableInput, results);
+	const zenodoPatch = settleZenodo(actionableInput, results);
+	const failedResult = results.find((result) => result.status === 'failed');
+	const nestedCleanupFailure = results.find((result) => (
+		result.status === 'succeeded' && result.zenodoOrphanDraftCleanup?.status === 'failed'
+	));
+	const pendingResult = results.find((result) => result.status === 'pending');
+	const everyOperationAccountedFor = input.plan.operations.every((operation) => (
+		results.some((result) => result.type === operation.type)
+	));
+
+	let failure: ProviderSyncStatePatch['failure'];
+	if (failedResult?.status === 'failed') {
+		failure = nextFailure(
+			input.previousState,
+			providerForOperation(failedResult.type),
+			failedResult.failureClass,
+			failedResult.failureSummary
+		);
+	} else if (nestedCleanupFailure?.status === 'succeeded') {
+		const cleanup = nestedCleanupFailure.zenodoOrphanDraftCleanup;
+		failure = nextFailure(
+			input.previousState,
+			'zenodo',
+			cleanup?.failureClass ?? 'ZENODO_ORPHAN_DRAFT_CLEANUP_FAILED',
+			cleanup?.failureSummary ?? 'Zenodo orphaned draft cleanup failed'
+		);
+	} else if (pendingResult?.status === 'pending') {
+		failure = stalePendingFailure(input, pendingResult) ?? (
+			everyOperationAccountedFor ? null : undefined
+		);
+	} else if (input.plan.status === 'noop' || everyOperationAccountedFor) {
+		failure = null;
+	}
+
+	return {
+		statePatch: {
+			...(crossrefPatch ? { crossref: crossrefPatch } : {}),
+			...(zenodoPatch ? { zenodo: zenodoPatch } : {}),
+			...(failure === undefined ? {} : { failure })
+		}
+	};
 }
 
-function findPendingResult(
-  results: readonly SyncOperationResult[],
-  operationType: SyncOperation['type']
-): Extract<SyncOperationResult, { readonly status: 'pending' }> | undefined {
-  return results.find((result): result is Extract<SyncOperationResult, { readonly status: 'pending' }> => (
-    result.type === operationType && result.status === 'pending'
-  ));
+function settleCrossref(
+	input: SettlePublicationSyncInput & { readonly plan: Extract<PublicationSyncPlan, { readonly snapshots: unknown }> },
+	results: readonly PublicationSyncOperationResult[]
+): ProviderSyncStatePatch['crossref'] | undefined {
+	let lastSuccess: NonNullable<ProviderSyncState['crossref']>['lastSuccess'] | undefined;
+	let pending: NonNullable<ProviderSyncState['crossref']>['pending'] | null | undefined;
+	for (const operation of input.plan.operations) {
+		if (!isCrossrefOperation(operation)) continue;
+		const result = resultFor(results, operation.type);
+		if (result?.status === 'succeeded') {
+			lastSuccess = {
+				payloadHash: operation.payloadHash,
+				...(input.plan.snapshots.crossrefPayload
+					? { payloadSnapshot: input.plan.snapshots.crossrefPayload }
+					: {})
+			};
+			pending = null;
+		}
+		if (result?.status === 'pending') {
+			const previousPending = input.previousState?.crossref?.pending;
+			const batchId = result.crossref?.batchId ?? previousPending?.batchId;
+			const filename = result.crossref?.filename ?? previousPending?.filename;
+			pending = {
+				stage: result.crossref.stage,
+				payloadHash: operation.payloadHash,
+				...(input.plan.snapshots.crossrefPayload
+					? { payloadSnapshot: input.plan.snapshots.crossrefPayload }
+					: {}),
+				...(batchId ? { batchId } : {}),
+				...(filename ? { filename } : {}),
+				submittedAt: result.crossref?.submittedAt ?? previousPending?.submittedAt ?? input.observedAt,
+				reason: result.pendingSummary
+			};
+		}
+		if (result?.status === 'failed' && operation.type === 'crossref_redeposit') pending = null;
+	}
+	if (!lastSuccess && pending === undefined) return undefined;
+	if (!input.plan.targets.crossref.enabled) return undefined;
+	return {
+		environment: input.plan.targets.crossref.environment,
+		...(lastSuccess ? { lastSuccess } : {}),
+		...(pending === undefined ? {} : { pending })
+	};
 }
 
-function staleCrossrefPendingFailure(
-  input: SettleSyncStateInput,
-  pendingResult: Extract<SyncOperationResult, { readonly status: 'pending' }>
-): { readonly failureClass: string; readonly failureSummary: string } | undefined {
-  if (pendingResult.pendingClass !== 'CROSSREF_PENDING') return undefined;
-  if (input.crossrefPendingMaxAgeMs === undefined) return undefined;
-  const submittedAt = pendingResult.crossref?.submittedAt ?? input.previousCrossrefPendingSubmittedAt;
-  if (!submittedAt) {
-    return {
-      failureClass: 'CROSSREF_PENDING_MISSING_SUBMITTED_AT',
-      failureSummary: 'Crossref pending verification cannot age out because submittedAt is missing'
-    };
-  }
-  const ageMs = input.observedAt.getTime() - submittedAt.getTime();
-  if (ageMs <= input.crossrefPendingMaxAgeMs) return undefined;
-  return {
-    failureClass: 'CROSSREF_PENDING_STALE',
-    failureSummary: `Crossref pending verification exceeded the configured max age: ${pendingResult.pendingSummary}`
-  };
+function settleZenodo(
+	input: SettlePublicationSyncInput & { readonly plan: Extract<PublicationSyncPlan, { readonly snapshots: unknown }> },
+	results: readonly PublicationSyncOperationResult[]
+): ProviderSyncStatePatch['zenodo'] | undefined {
+	let lastSuccess: NonNullable<ProviderSyncState['zenodo']>['lastSuccess'] | undefined;
+	let identifiers: ZenodoProviderIdentifiers | undefined;
+	let orphanDraftCleanup: NonNullable<ProviderSyncState['zenodo']>['orphanDraftCleanup'] | null | undefined;
+	for (const operation of input.plan.operations) {
+		if (!isZenodoOperation(operation)) continue;
+		if (operation.type === 'zenodo_cleanup_orphan_draft') {
+			const result = resultFor(results, operation.type);
+			if (result?.status === 'succeeded') orphanDraftCleanup = null;
+			continue;
+		}
+		if (operation.type === 'zenodo_discard_preparing_draft') continue;
+		const result = resultFor(results, operation.type);
+		if (result?.status !== 'succeeded') continue;
+		if (result.zenodo) identifiers = result.zenodo;
+		if (result.zenodoOrphanDraftCleanup?.status === 'failed') {
+			orphanDraftCleanup = { depositionId: result.zenodoOrphanDraftCleanup.depositionId };
+		}
+		if (result.zenodoOrphanDraftCleanup?.status === 'deleted') orphanDraftCleanup = null;
+		if (result.zenodoAdoptionOnly) continue;
+		const previous = lastSuccess ?? input.previousState?.zenodo?.lastSuccess;
+		const writesMetadata = zenodoOperationWritesMetadata(operation);
+		const writesFiles = zenodoOperationWritesFiles(operation);
+		const payloadHash = writesMetadata ? operation.payloadHash : previous?.payloadHash;
+		if (!payloadHash) continue;
+		const fileManifestHash = writesFiles && 'fileManifestHash' in operation
+			? operation.fileManifestHash
+			: previous?.fileManifestHash;
+		const payloadSnapshot = writesMetadata
+			? result.zenodoPayloadSnapshot ?? (
+				operation.payloadHash === input.plan.hashes.zenodoPayloadHash
+					? input.plan.snapshots.zenodoPayload
+					: undefined
+			)
+			: previous?.payloadSnapshot;
+		lastSuccess = {
+			payloadHash,
+			...(payloadSnapshot ? { payloadSnapshot } : {}),
+			...(fileManifestHash ? { fileManifestHash } : {}),
+			...(writesFiles && fileManifestHash === input.plan.hashes.fileManifestHash
+				? { fileManifestSnapshot: input.plan.snapshots.fileManifest }
+				: previous?.fileManifestSnapshot
+					? { fileManifestSnapshot: previous.fileManifestSnapshot }
+					: {})
+		};
+	}
+	if (!lastSuccess && !identifiers && orphanDraftCleanup === undefined) return undefined;
+	if (!input.plan.targets.zenodo.enabled) return undefined;
+	return {
+		environment: input.plan.targets.zenodo.environment,
+		identifierPolicy: input.plan.targets.zenodo.identifierPolicy,
+		...(lastSuccess ? { lastSuccess } : {}),
+		...(identifiers ? { identifiers } : {}),
+		...(orphanDraftCleanup === undefined ? {} : { orphanDraftCleanup })
+	};
 }
 
-function clearCrossrefPendingState(statePatch: MutableExternalSyncStatePatch): void {
-  statePatch.crossrefPendingPayloadHash = null;
-  statePatch.crossrefPendingPayloadSnapshot = null;
-  statePatch.crossrefPendingBatchId = null;
-  statePatch.crossrefPendingFilename = null;
-  statePatch.crossrefPendingSubmittedAt = null;
-  statePatch.crossrefPendingReason = null;
+function zenodoOperationWritesMetadata(operation: Extract<PublicationSyncOperation, { readonly type: `zenodo_${string}` }>): boolean {
+	return operation.type !== 'zenodo_file_update'
+		&& (
+			operation.type !== 'zenodo_publish_journaled_draft'
+			|| operation.originalOperationType !== 'zenodo_file_update'
+		);
 }
 
-function applyZenodoIdentifiersToPatch(
-  statePatch: MutableExternalSyncStatePatch,
-  identifiers: ZenodoSettlementIdentifiers | undefined
-): void {
-  if (!identifiers) return;
-  statePatch.zenodoLatestRecordId = identifiers.latestRecordId;
-  statePatch.zenodoParentId = identifiers.parentId;
-  if (identifiers.conceptDoi) statePatch.zenodoConceptDoi = identifiers.conceptDoi;
-  if (identifiers.versionDoi) statePatch.zenodoVersionDoi = identifiers.versionDoi;
+function zenodoOperationWritesFiles(operation: Extract<PublicationSyncOperation, { readonly type: `zenodo_${string}` }>): boolean {
+	return operation.type === 'zenodo_create'
+		|| operation.type === 'zenodo_file_update'
+		|| operation.type === 'zenodo_new_version'
+		|| (
+			operation.type === 'zenodo_publish_journaled_draft'
+			&& operation.originalOperationType !== 'zenodo_metadata_update'
+		);
+}
+
+function resultFor(
+	results: readonly PublicationSyncOperationResult[],
+	type: PublicationSyncOperation['type']
+): PublicationSyncOperationResult | undefined {
+	return results.find((result) => result.type === type);
+}
+
+function providerForOperation(type: PublicationSyncOperation['type']): 'crossref' | 'zenodo' {
+	return type.startsWith('crossref_') ? 'crossref' : 'zenodo';
+}
+
+function nextFailure(
+	state: ProviderSyncState | undefined,
+	provider: 'crossref' | 'zenodo',
+	failureClass: string,
+	summary: string
+): NonNullable<ProviderSyncState['failure']> {
+	return {
+		provider,
+		failureClass,
+		summary,
+		consecutiveCount: (state?.failure?.consecutiveCount ?? 0) + 1
+	};
+}
+
+function stalePendingFailure(
+	input: SettlePublicationSyncInput,
+	result: Extract<PublicationSyncOperationResult, { readonly status: 'pending' }>
+): NonNullable<ProviderSyncState['failure']> | undefined {
+	if (result.pendingClass !== 'CROSSREF_PENDING' || input.crossrefPendingMaxAgeMs === undefined) {
+		return undefined;
+	}
+	const submittedAt = result.crossref?.submittedAt
+		?? input.previousState?.crossref?.pending?.submittedAt;
+	if (!submittedAt) {
+		return nextFailure(
+			input.previousState,
+			'crossref',
+			'CROSSREF_PENDING_MISSING_SUBMITTED_AT',
+			'Crossref pending verification cannot age out because submittedAt is missing'
+		);
+	}
+	if (input.observedAt.getTime() - submittedAt.getTime() <= input.crossrefPendingMaxAgeMs) {
+		return undefined;
+	}
+	return nextFailure(
+		input.previousState,
+		'crossref',
+		'CROSSREF_PENDING_STALE',
+		`Crossref pending verification exceeded the configured max age: ${result.pendingSummary}`
+	);
 }

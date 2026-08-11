@@ -2,15 +2,31 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { CrossrefApiClient } from '../../crossref/client.js';
+import type { CrossrefMappedRecord } from '../../crossref/record-mapper.js';
 import { ZenodoApiClient } from '../../zenodo/client.js';
 import { ZENODO_INVENIORDM_ACCEPT } from '../../zenodo/records.js';
-import type { CanonicalMetadataSnapshot } from '../../metadata.js';
+import type { CrossrefDepositMetadata } from '../../publication/record.js';
 
 const server = setupServer();
 
-const metadata: CanonicalMetadataSnapshot = {
+function publicationInput<const T extends { readonly metadata: CrossrefDepositMetadata; readonly resourceUrl: string }>(
+  input: T
+): Omit<T, 'metadata' | 'resourceUrl'> & { readonly record: CrossrefMappedRecord } {
+  const { metadata, resourceUrl, ...rest } = input;
+  return {
+    ...rest,
+    record: {
+      kind: 'report', metadata, landingUrl: resourceUrl,
+      publisher: metadata.publisher ?? 'Open Development & Education',
+      isbns: [],
+      institution: metadata.institution ?? metadata.publisher ?? 'Open Development & Education'
+    }
+  };
+}
+
+const metadata: CrossrefDepositMetadata = {
   doi: '10.53832/opendeved.1205',
-  itemType: 'report',
+  itemType: 'Report',
   title: 'Evidence report',
   publicationDate: '2026-05-20',
   abstract: 'Original summary',
@@ -143,7 +159,7 @@ describe('HTTP-level provider clients with MSW', () => {
 
     const client = new CrossrefApiClient({ poll: { maxAttempts: 1, delayMs: 0 } });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'test',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -155,8 +171,8 @@ describe('HTTP-level provider clients with MSW', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata,
       resourceUrl: 'https://my.educationevidence.io/lib/ABC12345'
-    })).resolves.toMatchObject({
-      status: 'succeeded',
+    }))).resolves.toMatchObject({
+      status: 'pending',
       filename: 'doi-sync-batch-1.xml'
     });
 

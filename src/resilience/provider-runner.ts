@@ -73,9 +73,7 @@ export class ResilientProviderOperationRunner implements ProviderOperationRunner
 
 export function createDefaultProviderLimiters(): ReadonlyMap<ProviderName, ProviderRateLimiter> {
   return new Map<ProviderName, ProviderRateLimiter>([
-    ['clerk', new BottleneckProviderRateLimiter({ maxConcurrent: 2, minTimeMs: 100 })],
     ['crossref', new BottleneckProviderRateLimiter({ maxConcurrent: 1, minTimeMs: 500 })],
-    ['zenodo', new BottleneckProviderRateLimiter({ maxConcurrent: 1, minTimeMs: 500 })],
-    ['zotero', new BottleneckProviderRateLimiter({ maxConcurrent: 2, minTimeMs: 250 })]
+    ['zenodo', new BottleneckProviderRateLimiter({ maxConcurrent: 1, minTimeMs: 500 })]
   ]);
 }

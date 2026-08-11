@@ -2,6 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { asRecord } from '../guards.js';
 import { asJsonObject, toJsonValue, type JsonObject } from '../json.js';
 import { crossrefContributorRole } from './contributors.js';
+import type { CrossrefMappedRecord, CrossrefPages } from './record-mapper.js';
 
 export type CrossrefDiagnosticStatus = 'success' | 'failed' | 'pending';
 
@@ -14,13 +15,35 @@ export interface CrossrefDiagnosticResult {
 }
 
 export interface CrossrefUnixrefRecord {
+  readonly kind?: CrossrefMappedRecord['kind'];
   readonly doi?: string;
   readonly title?: string;
   readonly abstract?: string;
   readonly abstractLanguage?: string;
+  readonly language?: string;
   readonly publicationDate?: string;
   readonly publisher?: string;
   readonly institution?: string;
+  readonly containerTitle?: string;
+  readonly componentType?: string;
+  readonly postedContentType?: string;
+  readonly issns?: readonly string[];
+  readonly isbns?: readonly string[];
+  readonly volume?: string;
+  readonly issue?: string;
+  readonly pages?: CrossrefPages;
+  readonly edition?: string;
+  readonly componentNumber?: string;
+  readonly conferenceAcronym?: string;
+  readonly conferenceName?: string;
+  readonly conferenceLocation?: string;
+  readonly conferenceDate?: string;
+  readonly degree?: string;
+  readonly itemNumber?: string;
+  readonly version?: string;
+  readonly standardsBodyAcronym?: string;
+  readonly designator?: string;
+  readonly groupTitle?: string;
   readonly creators?: readonly CrossrefUnixrefCreator[];
   readonly resourceUrl?: string;
   readonly depositTimestamp?: string;
@@ -33,6 +56,8 @@ export interface CrossrefUnixrefCreator {
   readonly creatorType?: string;
   readonly givenName?: string;
   readonly familyName?: string;
+  readonly affiliation?: string;
+  readonly orcid?: string;
 }
 
 export interface CrossrefUnixrefRelation {
@@ -86,35 +111,266 @@ export function parseCrossrefUnixrefXml(xml: string): CrossrefUnixrefRecord | nu
   const doiRecords = asRecord(document['doi_records']);
   const doiRecord = firstRecord(doiRecords?.['doi_record']);
   const crossref = asRecord(doiRecord?.['crossref']);
-  const reportPaper = firstRecord(crossref?.['report-paper']);
-  const metadata = asRecord(reportPaper?.['report-paper_metadata']);
-  if (!metadata) return null;
+  const container = crossref ? findPublicationContainer(crossref) : null;
+  if (!container) return null;
+  const { metadata } = container;
 
-  const publicationDate = asRecord(metadata['publication_date']);
+  const publicationDate = publicationDateRecord(metadata);
   const doiData = asRecord(metadata['doi_data']);
   const title = textValue(asRecord(metadata['titles'])?.['title']);
-  const abstract = abstractMetadata(metadata);
+  const abstract = abstractMetadata(metadata) ?? (
+    container.kind === 'dataset' && textValue(metadata['description'])
+      ? { text: textValue(metadata['description']) as string }
+      : null
+  );
+  const language = textValue(metadata['@_language']) ?? container.language;
   const year = textValue(publicationDate?.['year']);
   const month = textValue(publicationDate?.['month']);
   const day = textValue(publicationDate?.['day']);
-  const publisher = textValue(asRecord(metadata['publisher'])?.['publisher_name']);
-  const institution = textValue(asRecord(metadata['institution'])?.['institution_name']);
+  const publisher = container.publisher;
+  const institution = container.institution;
   const creators = parseCreators(metadata);
   const relations = parseRelations(metadata);
 
   return {
+    kind: container.kind,
     ...optionalString('doi', doiData?.['doi']),
     ...(title ? { title } : {}),
     ...(abstract?.text ? { abstract: abstract.text } : {}),
     ...(abstract?.language ? { abstractLanguage: abstract.language } : {}),
+    ...(language ? { language } : {}),
     ...(year ? { publicationDate: formatDateParts(year, month, day) } : {}),
     ...(publisher ? { publisher } : {}),
     ...(institution ? { institution } : {}),
+    ...(container.containerTitle ? { containerTitle: container.containerTitle } : {}),
+    ...(container.componentType ? { componentType: container.componentType } : {}),
+    ...(container.postedContentType ? { postedContentType: container.postedContentType } : {}),
+    ...(container.issns ? { issns: container.issns } : {}),
+    ...(container.isbns ? { isbns: container.isbns } : {}),
+    ...copyOptionalDetails(container),
     ...(creators.length > 0 ? { creators } : {}),
     ...optionalString('resourceUrl', doiData?.['resource']),
     ...optionalString('depositTimestamp', doiRecord?.['@_timestamp']),
     ...(relations.length > 0 ? { relations } : {})
   };
+}
+
+function publicationDateRecord(metadata: Record<string, unknown>): Record<string, unknown> | null {
+  const databaseDate = asRecord(metadata['database_date']);
+  return asRecord(metadata['publication_date'])
+    ?? asRecord(metadata['approval_date'])
+    ?? asRecord(metadata['posted_date'])
+    ?? asRecord(databaseDate?.['publication_date']);
+}
+
+interface CrossrefPublicationContainer {
+  readonly kind: NonNullable<CrossrefUnixrefRecord['kind']>;
+  readonly metadata: Record<string, unknown>;
+  readonly containerTitle?: string;
+  readonly componentType?: string;
+  readonly postedContentType?: string;
+  readonly publisher?: string;
+  readonly institution?: string;
+  readonly issns?: readonly string[];
+  readonly isbns?: readonly string[];
+  readonly volume?: string;
+  readonly issue?: string;
+  readonly pages?: CrossrefPages;
+  readonly edition?: string;
+  readonly componentNumber?: string;
+  readonly conferenceAcronym?: string;
+  readonly conferenceName?: string;
+  readonly conferenceLocation?: string;
+  readonly conferenceDate?: string;
+  readonly degree?: string;
+  readonly itemNumber?: string;
+  readonly version?: string;
+  readonly standardsBodyAcronym?: string;
+  readonly designator?: string;
+  readonly language?: string;
+  readonly groupTitle?: string;
+}
+
+function findPublicationContainer(crossref: Record<string, unknown>): CrossrefPublicationContainer | null {
+  const journal = firstRecord(crossref['journal']);
+  const journalArticle = firstRecord(journal?.['journal_article']);
+  if (journalArticle) {
+    const journalMetadata = asRecord(journal?.['journal_metadata']);
+    const journalIssue = asRecord(journal?.['journal_issue']);
+    return {
+      kind: 'journal-article',
+      metadata: journalArticle,
+      ...optionalContainerTitle(journalMetadata?.['full_title']),
+      ...optionalTextValues('issns', journalMetadata?.['issn']),
+      ...optionalString('volume', asRecord(journalIssue?.['journal_volume'])?.['volume']),
+      ...optionalString('issue', journalIssue?.['issue']),
+      ...optionalPages(journalArticle)
+    };
+  }
+
+  const book = firstRecord(crossref['book']);
+  const bookMetadata = asRecord(book?.['book_metadata']);
+  const contentItem = firstRecord(book?.['content_item']);
+  if (contentItem) {
+    return {
+      kind: 'book-component',
+      metadata: contentItem,
+      ...optionalContainerTitle(bookMetadata?.['titles']),
+      ...optionalPublisher(bookMetadata),
+      ...optionalString('componentType', contentItem['@_component_type']),
+      ...optionalTextValues('isbns', bookMetadata?.['isbn']),
+      ...optionalString('edition', bookMetadata?.['edition_number']),
+      ...optionalString('componentNumber', contentItem['component_number']),
+      ...optionalPages(contentItem)
+    };
+  }
+  if (bookMetadata) {
+    return {
+      kind: 'book', metadata: bookMetadata, ...optionalPublisher(bookMetadata),
+      ...optionalTextValues('isbns', bookMetadata['isbn']),
+      ...optionalString('edition', bookMetadata['edition_number'])
+    };
+  }
+
+  const conference = firstRecord(crossref['conference']);
+  const proceedingsMetadata = asRecord(conference?.['proceedings_metadata']);
+  const conferencePaper = firstRecord(conference?.['conference_paper']);
+  if (conferencePaper) {
+    return {
+      kind: 'conference-paper',
+      metadata: conferencePaper,
+      ...optionalContainerTitle(proceedingsMetadata?.['proceedings_title']),
+      ...optionalPublisher(proceedingsMetadata),
+      ...optionalTextValues('isbns', proceedingsMetadata?.['isbn']),
+      ...optionalString('conferenceName', asRecord(conference?.['event_metadata'])?.['conference_name']),
+      ...optionalString('conferenceAcronym', asRecord(conference?.['event_metadata'])?.['conference_acronym']),
+      ...optionalString('conferenceLocation', asRecord(conference?.['event_metadata'])?.['conference_location']),
+      ...optionalString('conferenceDate', asRecord(conference?.['event_metadata'])?.['conference_date']),
+      ...optionalPages(conferencePaper)
+    };
+  }
+
+  const dissertation = firstRecord(crossref['dissertation']);
+  if (dissertation) {
+    return {
+      kind: 'dissertation', metadata: dissertation, ...optionalInstitution(dissertation),
+      ...optionalTextValues('isbns', dissertation['isbn']),
+      ...optionalString('degree', dissertation['degree'])
+    };
+  }
+  const report = firstRecord(crossref['report-paper']);
+  const reportMetadata = asRecord(report?.['report-paper_metadata']);
+  if (reportMetadata) {
+    return {
+      kind: 'report', metadata: reportMetadata,
+      ...optionalPublisher(reportMetadata), ...optionalInstitution(reportMetadata),
+      ...optionalTextValues('isbns', reportMetadata['isbn']),
+      ...optionalString('edition', reportMetadata['edition_number']),
+      ...optionalItemNumber(reportMetadata)
+    };
+  }
+  const standard = firstRecord(crossref['standard']);
+  const standardMetadata = asRecord(standard?.['standard_metadata']);
+  if (standardMetadata) {
+    const standardsBody = asRecord(standardMetadata['standards_body']);
+    return {
+      kind: 'standard', metadata: standardMetadata,
+      ...optionalString('institution', standardsBody?.['standards_body_name']),
+      ...optionalString('standardsBodyAcronym', standardsBody?.['standards_body_acronym']),
+      ...optionalString('designator', asRecord(asRecord(standardMetadata['designators'])?.['std_as_published'])?.['std_designator']),
+      ...optionalPublisher(standardMetadata),
+      ...optionalTextValues('isbns', standardMetadata['isbn']),
+      ...optionalString('edition', standardMetadata['edition_number'])
+    };
+  }
+  const database = firstRecord(crossref['database']);
+  const databaseMetadata = asRecord(database?.['database_metadata']);
+  const dataset = firstRecord(database?.['dataset']);
+  if (dataset) {
+    return {
+      kind: 'dataset',
+      metadata: dataset,
+      ...optionalContainerTitle(databaseMetadata?.['titles']),
+      ...optionalPublisher(databaseMetadata),
+      ...optionalInstitution(databaseMetadata),
+      ...optionalString('language', databaseMetadata?.['@_language']),
+      ...optionalVersion(dataset)
+    };
+  }
+  const postedContent = firstRecord(crossref['posted_content']);
+  if (postedContent) {
+    return {
+      kind: 'posted-content',
+      metadata: postedContent,
+      ...optionalInstitution(postedContent),
+      ...optionalString('groupTitle', postedContent['group_title']),
+      ...optionalItemNumber(postedContent),
+      ...optionalString('postedContentType', postedContent['@_type'])
+    };
+  }
+  return null;
+}
+
+function copyOptionalDetails(container: CrossrefPublicationContainer): Partial<CrossrefUnixrefRecord> {
+  const result: Record<string, unknown> = {};
+  for (const key of [
+    'volume', 'issue', 'pages', 'edition', 'componentNumber', 'conferenceName', 'conferenceAcronym',
+    'conferenceLocation', 'conferenceDate', 'degree', 'itemNumber', 'version',
+    'standardsBodyAcronym', 'designator', 'groupTitle'
+  ] as const) {
+    const value = container[key];
+    if (value !== undefined) result[key] = value;
+  }
+  return result;
+}
+
+function textValues(value: unknown): readonly string[] {
+  return recordsOrValues(value).flatMap((entry) => {
+    const text = elementText(entry);
+    return text ? [text] : [];
+  });
+}
+
+function optionalTextValues<Key extends 'issns' | 'isbns'>(
+  key: Key,
+  value: unknown
+): Partial<Readonly<Record<Key, readonly string[]>>> {
+  const values = textValues(value);
+  return values.length > 0 ? { [key]: values } as Readonly<Record<Key, readonly string[]>> : {};
+}
+
+function recordsOrValues(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : value === undefined || value === null ? [] : [value];
+}
+
+function optionalPages(metadata: Record<string, unknown>): { readonly pages?: CrossrefPages } {
+  const pages = asRecord(metadata['pages']);
+  const first = textValue(pages?.['first_page']);
+  const last = textValue(pages?.['last_page']);
+  return first ? { pages: { first, ...(last ? { last } : {}) } } : {};
+}
+
+function optionalItemNumber(metadata: Record<string, unknown>): { readonly itemNumber?: string } {
+  return optionalString('itemNumber', asRecord(metadata['publisher_item'])?.['item_number']);
+}
+
+function optionalVersion(metadata: Record<string, unknown>): { readonly version?: string } {
+  return optionalString('version', asRecord(metadata['version_info'])?.['version']);
+}
+
+function optionalPublisher(metadata: Record<string, unknown> | null): { readonly publisher?: string } {
+  const publisher = textValue(asRecord(metadata?.['publisher'])?.['publisher_name']);
+  return publisher ? { publisher } : {};
+}
+
+function optionalInstitution(metadata: Record<string, unknown> | null): { readonly institution?: string } {
+  const institution = textValue(asRecord(metadata?.['institution'])?.['institution_name']);
+  return institution ? { institution } : {};
+}
+
+function optionalContainerTitle(value: unknown): { readonly containerTitle?: string } {
+  const title = textValue(asRecord(value)?.['title']) ?? textValue(value);
+  return title ? { containerTitle: title } : {};
 }
 
 function abstractMetadata(metadata: Record<string, unknown>): { readonly text: string; readonly language?: string } | null {
@@ -146,6 +402,10 @@ function parsePersonName(person: Record<string, unknown>): readonly CrossrefUnix
   const givenName = textValue(person['given_name']);
   const familyName = textValue(person['surname']);
   const name = [familyName, givenName].filter((part): part is string => Boolean(part)).join(', ');
+  const affiliation = textValue(
+    asRecord(asRecord(person['affiliations'])?.['institution'])?.['institution_name']
+  );
+  const orcid = textValue(person['ORCID']);
   if (!name) return [];
 
   return [{
@@ -153,7 +413,9 @@ function parsePersonName(person: Record<string, unknown>): readonly CrossrefUnix
     name,
     creatorType: crossrefContributorRole(textValue(person['@_contributor_role']) ?? undefined),
     ...(givenName ? { givenName } : {}),
-    ...(familyName ? { familyName } : {})
+    ...(familyName ? { familyName } : {}),
+    ...(affiliation ? { affiliation } : {}),
+    ...(orcid ? { orcid } : {})
   }];
 }
 
@@ -229,12 +491,14 @@ function parseCrossrefRestRelationsFromRecord(relation: Record<string, unknown>)
 
 function parseRelations(metadata: Record<string, unknown>): readonly CrossrefUnixrefRelation[] {
   const relations: CrossrefUnixrefRelation[] = [];
-  for (const program of records(metadata['program'])) {
-    for (const relatedItem of records(program['related_item'])) {
+  for (const program of [...records(metadata['program']), ...records(metadata['rel:program'])]) {
+    for (const relatedItem of [...records(program['related_item']), ...records(program['rel:related_item'])]) {
       const description = textValue(relatedItem['description']);
       for (const relationElement of [
         ...records(relatedItem['inter_work_relation']),
-        ...records(relatedItem['intra_work_relation'])
+        ...records(relatedItem['intra_work_relation']),
+        ...records(relatedItem['rel:inter_work_relation']),
+        ...records(relatedItem['rel:intra_work_relation'])
       ]) {
         const relation: CrossrefUnixrefRelation = {
           ...optionalString('type', relationElement['@_relationship-type']),

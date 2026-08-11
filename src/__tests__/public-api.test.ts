@@ -1,76 +1,53 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
 
-import * as publicApi from '../index.js';
 import * as displayApi from '../display.js';
+import * as publicApi from '../index.js';
 
 const expectedRuntimeExports = [
-  'CrossrefApiClient',
-  'DEFAULT_ZOTERO_PDF_TAGS',
-  'DirectProviderOperationRunner',
-  'EvidenceLibraryRedirectResolver',
-  'ProviderHttpError',
-  'ResilientProviderOperationRunner',
-  'ZENODO_INVENIORDM_ACCEPT',
-  'ZOTERO_DOI_LIVE_TAG',
-  'ZOTERO_ZENODO_SUBMITTED_TAG',
-  'ZOTERO_ZENODO_UPLOADED_TAG',
-  'ZenodoApiClient',
-  'ZoteroApiClient',
-  'analyzeDoiDrift',
-  'auditCrossrefDepositMetadata',
-  'auditZenodoWritePayloadMetadata',
-  'buildCanonicalMetadataSnapshot',
-  'buildFileManifest',
-  'buildFileManifestHash',
-  'buildIntendedDiff',
-  'buildZenodoWritePayload',
-  'buildZoteroWritebackData',
-  'buildZoteroWritebackIdentifiers',
-  'createNoopLogger',
-  'describeDryRunExecution',
-  'diffFileManifest',
-  'effectiveZenodoDoiPolicy',
-  'executeLiveSyncPlan',
-  'jsonValueSchema',
-  'mergeManagedExtraLines',
-  'parseManagedExtraIdentifiers',
-  'planZoteroDoiDriftAutofix',
-  'planZoteroIdentifierLinkReconciliation',
-  'planZoteroIdentifierLinks',
-  'planZoteroSuccessTagApplications',
-  'planZoteroWriteback',
-  'prepareDoiSync',
-  'recoverZenodoFileStateFromSnapshot',
-  'resolveCanonicalZoteroRecord',
-  'resolveDoiCandidates',
-  'resolveZenodoSyncState',
-  'settleLiveSyncPlan',
-  'normalizeDoi'
+	'CrossrefApiClient',
+	'CROSSREF_PAYLOAD_FORMAT',
+	'DirectProviderOperationRunner',
+	'ProviderHttpError',
+	'ResilientProviderOperationRunner',
+	'ZENODO_INVENIORDM_ACCEPT',
+	'ZenodoApiClient',
+	'analyzeDoiDrift',
+	'buildCrossrefPayloadSnapshot',
+	'buildCrossrefPublicationXml',
+	'buildPublicationFileManifestHash',
+	'buildPublicationFileManifestSnapshot',
+	'buildPublicationPayloadHash',
+	'buildPublicationPayloadSnapshots',
+	'buildZenodoPayloadSnapshot',
+	'buildZenodoWritePayload',
+	'createNoopLogger',
+	'describeDryRun',
+	'executeLivePublicationSyncPlan',
+	'jsonValueSchema',
+	'mapCrossrefRecord',
+	'mapZenodoResourceType',
+	'normalizeDoi',
+	'parsePublicationFileManifest',
+	'parsePublicationIdentifiers',
+	'parsePublicationRecordSnapshot',
+	'parsePublicationTargetPolicy',
+	'planPublicationSync',
+	'resolveDoiCandidates',
+	'settlePublicationSyncState'
 ].sort();
 
 describe('public API surface', () => {
-  it('exports only the curated runtime API from the root package', () => {
-    expect(Object.keys(publicApi).sort()).toEqual(expectedRuntimeExports);
-  });
+	it('exports only the provider-neutral runtime API', () => {
+		expect(Object.keys(publicApi).sort()).toEqual(expectedRuntimeExports);
+		expect(Object.keys(publicApi).join(' ')).not.toMatch(/zotero/i);
+	});
 
-  it('does not use wildcard exports from the root package', () => {
-    const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
-
-    expect(indexSource).not.toMatch(/export\s+\*/);
-  });
-
-  it('keeps browser-safe display helpers on a dedicated subpath', () => {
-    const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
-      readonly exports?: Record<string, unknown>;
-    };
-
-    expect(packageJson.exports?.['./display']).toEqual({
-      types: './dist/display.d.ts',
-      import: './dist/display.js'
-    });
-    expect(Object.keys(displayApi).sort()).toEqual(['buildDoiDisplayLinks']);
-    expect(Object.keys(publicApi)).not.toContain('buildDoiDisplayLinks');
-    expect(readFileSync(new URL('../display.ts', import.meta.url), 'utf8')).not.toMatch(/zotero/i);
-  });
+	it('uses explicit exports and keeps browser-safe display isolated', () => {
+		const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+		expect(indexSource).not.toMatch(/export\s+\*/);
+		expect(Object.keys(displayApi).sort()).toEqual(['buildDoiDisplayLinks']);
+		expect(Object.keys(publicApi)).not.toContain('buildDoiDisplayLinks');
+		expect(readFileSync(new URL('../display.ts', import.meta.url), 'utf8')).not.toMatch(/zotero/i);
+	});
 });

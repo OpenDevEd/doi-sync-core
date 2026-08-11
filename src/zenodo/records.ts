@@ -1,7 +1,8 @@
-import type { CanonicalMetadataSnapshot } from '../metadata.js';
+import type { PublicationProviderMetadata } from '../publication/record.js';
 import type { JsonValue } from '../hash.js';
 import { asJsonObject, toJsonValue, type JsonObject } from '../json.js';
 import { asBoolean, asRecord, asString, idString } from '../guards.js';
+import { mapZenodoResourceType, type ZenodoResourceType } from './resource-mapper.js';
 
 /** Accept header required to receive the current InvenioRDM Zenodo API shape. */
 export const ZENODO_INVENIORDM_ACCEPT = 'application/vnd.inveniordm.v1+json';
@@ -10,20 +11,11 @@ export type DoiPolicy = 'dual' | 'external-crossref';
 
 export interface ZenodoWritePayloadInput {
   readonly doiPolicy: DoiPolicy;
-  readonly metadata: CanonicalMetadataSnapshot;
+  readonly metadata: PublicationProviderMetadata;
   readonly existingMetadata?: Readonly<Record<string, JsonValue>>;
-  /** Zotero `zotero://select/...` URL for the parent item; emitted into the legacy deposition `related_identifiers` write payload. */
-  readonly zoteroSelectUrl?: string;
   /** Public resource URL (e.g. Kerko); appended to `description` as an idempotent `<p>Available from ...</p>` block. */
   readonly resourceUrl?: string;
 }
-
-/** Legacy Zenodo deposition `related_identifiers` shape for back-linking a Zenodo record to its Zotero source. */
-export const ZOTERO_BACK_LINK_RELATION = 'isAlternateIdentifier';
-export const ZOTERO_BACK_LINK_RESOURCE_TYPE = 'other';
-export const ZOTERO_BACK_LINK_SCHEME = 'url';
-export const ZENODO_LEGACY_UPLOAD_TYPE = 'publication';
-export const ZENODO_LEGACY_PUBLICATION_TYPE = 'report';
 
 export interface ZenodoLegacyDepositionPayload {
   readonly metadata: Readonly<Record<string, JsonValue>>;
@@ -94,31 +86,65 @@ export function buildZenodoWritePayload(input: ZenodoWritePayloadInput): ZenodoL
   const output: Record<string, JsonValue> = {
     ...(input.existingMetadata ?? {})
   };
+  const resourceType = mapZenodoResourceType(metadata.itemType);
+  if (!resourceType) throw new Error(`Zenodo cannot publish Evidence Library item type ${metadata.itemType}`);
+  if (!metadata.abstract) throw new Error('Zenodo requires an abstract or description');
+  if (metadata.creators.length === 0) throw new Error('Zenodo requires at least one creator');
 
   output['title'] = metadata.title;
-  output['upload_type'] = ZENODO_LEGACY_UPLOAD_TYPE;
-  output['publication_type'] = ZENODO_LEGACY_PUBLICATION_TYPE;
+  applyResourceType(output, resourceType);
   output['publication_date'] = metadata.publicationDate;
-  output['description'] = withResourceUrlAppendix(metadata.abstract ?? '[No description available.]', input.resourceUrl);
-  output['creators'] = metadata.creators.length > 0
-    ? metadata.creators.map(zenodoCreator)
-    : [{ name: 'No name available.', affiliation: 'No affiliation available.' }];
+  output['description'] = withResourceUrlAppendix(metadata.abstract, input.resourceUrl);
+  output['creators'] = metadata.creators.map(zenodoCreator);
   output['access_right'] = 'open';
+  replaceOptional(output, 'license', metadata.license);
+  replaceOptional(output, 'notes', metadata.rights);
+  replaceOptional(output, 'language', metadata.language);
+  replaceOptional(output, 'imprint_publisher', metadata.publisher);
+  replaceOptional(
+    output,
+    'thesis_university',
+    metadata.itemType === 'Thesis' ? metadata.institution : undefined
+  );
+  if (metadata.tags.length > 0) output['keywords'] = [...new Set(metadata.tags)].sort();
+  else delete output['keywords'];
+  replaceManagedHostingInstitution(output, metadata.institution);
   const communities = normalizeLegacyCommunities(output['communities']);
   if (communities.length > 0) output['communities'] = communities;
   else delete output['communities'];
 
   if (input.doiPolicy === 'external-crossref') {
+    if (!metadata.doi) throw new Error('Zenodo external DOI policy requires a DOI');
     output['doi'] = metadata.doi;
   } else {
     removeClientSuppliedDoiFields(output);
   }
 
-  if (input.zoteroSelectUrl) {
-    output['related_identifiers'] = mergeZoteroBackLink(output['related_identifiers'], input.zoteroSelectUrl);
-  }
-
   return { metadata: output };
+}
+
+function replaceManagedHostingInstitution(output: Record<string, JsonValue>, institution: string | undefined): void {
+  const preserved = Array.isArray(output['contributors'])
+    ? output['contributors'].filter((contributor) => (
+        asString(asRecord(contributor)?.['type']) !== 'HostingInstitution'
+      ))
+    : [];
+  if (institution) preserved.push({ name: institution, type: 'HostingInstitution' });
+  if (preserved.length > 0) output['contributors'] = preserved;
+  else delete output['contributors'];
+}
+
+function applyResourceType(output: Record<string, JsonValue>, resourceType: ZenodoResourceType): void {
+  delete output['publication_type'];
+  delete output['image_type'];
+  output['upload_type'] = resourceType.uploadType;
+  if (resourceType.uploadType === 'publication') output['publication_type'] = resourceType.publicationType;
+  if (resourceType.uploadType === 'image') output['image_type'] = resourceType.imageType;
+}
+
+function replaceOptional(output: Record<string, JsonValue>, key: string, value: string | undefined): void {
+  if (value) output[key] = value;
+  else delete output[key];
 }
 
 function withResourceUrlAppendix(description: string, resourceUrl: string | undefined): string {
@@ -131,41 +157,6 @@ function withResourceUrlAppendix(description: string, resourceUrl: string | unde
 function buildResourceUrlAppendix(resourceUrl: string): string {
   const escaped = escapeHtml(resourceUrl);
   return `<p>Available from <a href="${escaped}">${escaped}</a></p>`;
-}
-
-function mergeZoteroBackLink(existing: JsonValue | undefined, zoteroSelectUrl: string): readonly JsonValue[] {
-  const current: readonly JsonValue[] = Array.isArray(existing) ? existing : [];
-  const normalized = current.map((entry) => isZoteroBackLink(entry, zoteroSelectUrl) ? legacyZoteroBackLink(zoteroSelectUrl) : entry);
-  if (normalized.some((entry) => isLegacyZoteroBackLink(entry, zoteroSelectUrl))) return normalized;
-  return [...normalized, legacyZoteroBackLink(zoteroSelectUrl)];
-}
-
-function legacyZoteroBackLink(zoteroSelectUrl: string): JsonValue {
-  return {
-    identifier: zoteroSelectUrl,
-    relation: ZOTERO_BACK_LINK_RELATION,
-    resource_type: ZOTERO_BACK_LINK_RESOURCE_TYPE,
-    scheme: ZOTERO_BACK_LINK_SCHEME
-  };
-}
-
-function isZoteroBackLink(entry: JsonValue, zoteroSelectUrl: string): boolean {
-  return isLegacyZoteroBackLink(entry, zoteroSelectUrl) || isCurrentZoteroBackLink(entry, zoteroSelectUrl);
-}
-
-function isLegacyZoteroBackLink(entry: JsonValue, zoteroSelectUrl: string): boolean {
-  const record = asRecord(entry);
-  return asString(record?.['identifier']) === zoteroSelectUrl
-    && asString(record?.['relation']) === ZOTERO_BACK_LINK_RELATION
-    && asString(record?.['scheme']) === ZOTERO_BACK_LINK_SCHEME;
-}
-
-function isCurrentZoteroBackLink(entry: JsonValue, zoteroSelectUrl: string): boolean {
-  const record = asRecord(entry);
-  const relationType = asRecord(record?.['relation_type']);
-  return asString(record?.['identifier']) === zoteroSelectUrl
-    && asString(relationType?.['id']) === 'isalternateidentifier'
-    && asString(record?.['scheme']) === ZOTERO_BACK_LINK_SCHEME;
 }
 
 function escapeHtml(value: string): string {
@@ -181,7 +172,7 @@ function removeClientSuppliedDoiFields(metadata: Record<string, JsonValue>): voi
   delete metadata['prereserve_doi'];
 }
 
-function zenodoCreator(creator: CanonicalMetadataSnapshot['creators'][number]): Readonly<Record<string, string>> {
+function zenodoCreator(creator: PublicationProviderMetadata['creators'][number]): Readonly<Record<string, string>> {
   return {
     name: creator.name,
     ...(creator.affiliation ? { affiliation: creator.affiliation } : {}),

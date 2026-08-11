@@ -59,6 +59,8 @@ describe('Crossref diagnostic response parsing', () => {
                   <person_name contributor_role="author" sequence="first">
                     <given_name>Ada</given_name>
                     <surname>Lovelace</surname>
+                    <affiliations><institution><institution_name>OpenDevEd</institution_name></institution></affiliations>
+                    <ORCID>https://orcid.org/0000-0002-1825-0097</ORCID>
                   </person_name>
                   <organization contributor_role="editor" sequence="additional">Open Development &amp; Education</organization>
                 </contributors>
@@ -89,6 +91,7 @@ describe('Crossref diagnostic response parsing', () => {
         </doi_record>
       </doi_records>
     `)).toEqual({
+		kind: 'report',
       doi: '10.53832/opendeved.1205',
       title: 'Evidence report',
       abstract: 'An output of the Open Development & Education, https://opendeved.net/.',
@@ -102,7 +105,9 @@ describe('Crossref diagnostic response parsing', () => {
           name: 'Lovelace, Ada',
           creatorType: 'author',
           givenName: 'Ada',
-          familyName: 'Lovelace'
+          familyName: 'Lovelace',
+          affiliation: 'OpenDevEd',
+          orcid: 'https://orcid.org/0000-0002-1825-0097'
         },
         {
           type: 'organizational',

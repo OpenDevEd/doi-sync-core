@@ -8,8 +8,9 @@ import {
   type CrossrefUnixrefRecord
 } from './response.js';
 import { crossrefContributorRole } from './contributors.js';
-import { buildCrossrefReportPaperXml, type CrossrefDepositRelation, type CrossrefRelation } from './xml.js';
-import type { CanonicalCreator, CanonicalMetadataSnapshot } from '../metadata.js';
+import type { CrossrefMappedRecord } from './record-mapper.js';
+import { buildCrossrefPublicationXml, type CrossrefDepositRelation, type CrossrefRelation } from './xml.js';
+import type { PublicationCreator } from '../publication/record.js';
 import { ProviderHttpError, retryAfterMsFromHeaders, type ProviderResponseHeaders } from '../resilience/errors.js';
 import { DirectProviderOperationRunner, type ProviderOperationRunner } from '../resilience/provider-runner.js';
 import { compareCodeUnits } from '../sort.js';
@@ -40,7 +41,7 @@ export interface CrossrefApiClientOptions {
   readonly poll?: Partial<CrossrefPollOptions>;
 }
 
-export interface CrossrefReportPaperDepositInput {
+export interface CrossrefPublicationDepositInput {
   readonly environment: CrossrefEnvironment;
   readonly loginId: string;
   readonly password: string;
@@ -50,19 +51,17 @@ export interface CrossrefReportPaperDepositInput {
   readonly batchId: string;
   readonly timestamp: string;
   readonly filename: string;
-  readonly metadata: CanonicalMetadataSnapshot;
-  readonly resourceUrl: string;
+  readonly record: CrossrefMappedRecord;
   readonly relation?: CrossrefDepositRelation;
   /** Called after Crossref accepts the upload and before submissionDownload polling begins. */
   readonly onSubmitted?: () => Promise<void>;
 }
 
-export interface CrossrefReportPaperVerifyInput {
+export interface CrossrefPublicationVerifyInput {
   readonly environment: CrossrefEnvironment;
   readonly emailAddress: string;
-  readonly metadata: CanonicalMetadataSnapshot;
-  readonly resourceUrl: string;
-  readonly relation?: CrossrefRelation;
+  readonly record: CrossrefMappedRecord;
+  readonly relation?: CrossrefDepositRelation;
 }
 
 export interface CrossrefReadWorkInput {
@@ -109,15 +108,14 @@ export class CrossrefApiClient {
     };
   }
 
-  async submitReportPaper(input: CrossrefReportPaperDepositInput): Promise<CrossrefDepositOutcome> {
-    const xml = buildCrossrefReportPaperXml({
+  async submitPublication(input: CrossrefPublicationDepositInput): Promise<CrossrefDepositOutcome> {
+    const xml = buildCrossrefPublicationXml({
       batchId: input.batchId,
       timestamp: input.timestamp,
       depositorName: input.depositorName,
       emailAddress: input.emailAddress,
       registrant: input.registrant,
-      metadata: input.metadata,
-      resourceUrl: input.resourceUrl,
+      record: input.record,
       ...(input.relation ? { relation: input.relation } : {})
     });
     const loginId = crossrefLoginId(input.loginId);
@@ -138,15 +136,24 @@ export class CrossrefApiClient {
       password: input.password,
       filename: input.filename
     }));
-    if (outcome.status !== 'succeeded' || input.environment !== 'production') return outcome;
+    if (outcome.status !== 'succeeded') return outcome;
+    if (input.environment === 'test') {
+      return {
+        status: 'pending',
+        filename: outcome.filename,
+        diagnostic: outcome.diagnostic,
+        xmlVerification: {
+          status: 'pending',
+          reason: 'Crossref test submission was accepted and requires XML API verification'
+        }
+      };
+    }
 
-    const verificationRelation = input.relation === 'delete-all' ? undefined : input.relation;
     const verification = await this.operationRunner.run('crossref', () => this.pollXmlApiVerification({
       environment: input.environment,
       pid: input.emailAddress,
-      metadata: input.metadata,
-      resourceUrl: input.resourceUrl,
-      ...(verificationRelation ? { relation: verificationRelation } : {})
+      record: input.record,
+      ...(input.relation ? { relation: input.relation } : {})
     }));
     if (verification.status === 'matched') {
       return {
@@ -181,12 +188,11 @@ export class CrossrefApiClient {
     });
   }
 
-  async verifyReportPaper(input: CrossrefReportPaperVerifyInput): Promise<CrossrefXmlApiVerification> {
+  async verifyPublication(input: CrossrefPublicationVerifyInput): Promise<CrossrefXmlApiVerification> {
     return this.operationRunner.run('crossref', () => this.pollXmlApiVerification({
       environment: input.environment,
       pid: input.emailAddress,
-      metadata: input.metadata,
-      resourceUrl: input.resourceUrl,
+      record: input.record,
       ...(input.relation ? { relation: input.relation } : {})
     }));
   }
@@ -250,9 +256,8 @@ export class CrossrefApiClient {
   private async pollXmlApiVerification(input: {
     readonly environment: CrossrefEnvironment;
     readonly pid: string;
-    readonly metadata: CanonicalMetadataSnapshot;
-    readonly resourceUrl: string;
-    readonly relation?: CrossrefRelation;
+    readonly record: CrossrefMappedRecord;
+    readonly relation?: CrossrefDepositRelation;
   }): Promise<CrossrefXmlApiVerification> {
     let lastVerification: CrossrefXmlApiVerification | undefined;
     for (let attempt = 0; attempt < this.poll.maxAttempts; attempt++) {
@@ -265,8 +270,7 @@ export class CrossrefApiClient {
       const record = parseCrossrefUnixrefXml(await response.text());
       const metadataVerification = verifyXmlApiRecord({
         record,
-        metadata: input.metadata,
-        resourceUrl: input.resourceUrl
+        expected: input.record
       });
       lastVerification = metadataVerification;
       if (metadataVerification.status !== 'matched') continue;
@@ -319,11 +323,11 @@ function buildSubmissionDownloadRequest(input: {
 function buildXmlApiLookupUrl(input: {
   readonly environment: CrossrefEnvironment;
   readonly pid: string;
-  readonly metadata: CanonicalMetadataSnapshot;
+  readonly record: CrossrefMappedRecord;
 }): string {
   const params = new URLSearchParams({
     pid: input.pid,
-    id: `doi:${input.metadata.doi}`,
+    id: `doi:${input.record.metadata.doi}`,
     noredirect: 'true',
     format: 'unixref'
   });
@@ -340,47 +344,100 @@ function buildRestWorkLookupUrl(input: CrossrefReadWorkInput): string {
 
 function verifyXmlApiRecord(input: {
   readonly record: CrossrefUnixrefRecord | null;
-  readonly metadata: CanonicalMetadataSnapshot;
-  readonly resourceUrl: string;
+  readonly expected: CrossrefMappedRecord;
 }): CrossrefXmlApiVerification {
   if (!input.record) {
     return {
       status: 'pending',
-      reason: 'Crossref XML API did not return a report-paper record'
+      reason: 'Crossref XML API did not return the deposited publication record'
     };
   }
 
   const expected = {
-    doi: normalizeDoi(input.metadata.doi),
-    title: normalizeText(input.metadata.title),
-    abstract: normalizeText(input.metadata.abstract),
-    abstractLanguage: input.metadata.abstract ? normalizeLanguage(input.metadata.language) : null,
-    publicationDate: input.metadata.publicationDate,
-    publisher: normalizeText(input.metadata.publisher),
-    creators: crossrefCreatorSignatures(input.metadata.creators),
-    resourceUrl: normalizeUrl(input.resourceUrl)
+    kind: input.expected.kind,
+    doi: normalizeDoi(input.expected.metadata.doi),
+    title: normalizeText(input.expected.metadata.title),
+    abstract: normalizeText(input.expected.metadata.abstract),
+    abstractLanguage: input.expected.metadata.abstract && input.expected.kind !== 'dataset'
+      ? normalizeLanguage(input.expected.metadata.language)
+      : null,
+    language: normalizeLanguage(input.expected.metadata.language),
+    publicationDate: input.expected.metadata.publicationDate,
+    publisher: normalizeText(expectedPublisher(input.expected)),
+    institution: normalizeText(expectedInstitution(input.expected)),
+    containerTitle: normalizeText(expectedContainerTitle(input.expected)),
+    componentType: input.expected.kind === 'book-component' ? input.expected.componentType : null,
+    postedContentType: input.expected.kind === 'posted-content' ? input.expected.postedContentType : null,
+    creators: crossrefCreatorSignatures(input.expected.metadata.creators),
+    resourceUrl: normalizeUrl(input.expected.landingUrl),
+    ...expectedTypeDetails(input.expected)
   };
   const actual = {
     doi: normalizeDoi(input.record.doi),
+    kind: input.record.kind,
     title: normalizeText(input.record.title),
     abstract: normalizeText(input.record.abstract),
     abstractLanguage: normalizeLanguage(input.record.abstractLanguage),
+    language: normalizeLanguage(input.record.language ?? input.record.abstractLanguage),
     publicationDate: input.record.publicationDate,
     publisher: normalizeText(input.record.publisher),
     institution: normalizeText(input.record.institution),
+    containerTitle: normalizeText(input.record.containerTitle),
+    componentType: normalizeText(input.record.componentType),
+    postedContentType: normalizeText(input.record.postedContentType),
     creators: crossrefCreatorSignatures(input.record.creators ?? []),
-    resourceUrl: normalizeUrl(input.record.resourceUrl)
+    resourceUrl: normalizeUrl(input.record.resourceUrl),
+    issns: normalizeStringArray(input.record.issns ?? []),
+    isbns: normalizeStringArray(input.record.isbns ?? []),
+    volume: normalizeText(input.record.volume),
+    issue: normalizeText(input.record.issue),
+    pages: normalizePages(input.record.pages),
+    edition: normalizeText(input.record.edition),
+    componentNumber: normalizeText(input.record.componentNumber),
+    conferenceName: normalizeText(input.record.conferenceName),
+    conferenceAcronym: normalizeText(input.record.conferenceAcronym),
+    conferenceLocation: normalizeText(input.record.conferenceLocation),
+    conferenceDate: normalizeText(input.record.conferenceDate),
+    degree: normalizeText(input.record.degree),
+    itemNumber: normalizeText(input.record.itemNumber),
+    version: normalizeText(input.record.version),
+    standardsBodyAcronym: normalizeText(input.record.standardsBodyAcronym),
+    designator: normalizeText(input.record.designator),
+    groupTitle: normalizeText(input.record.groupTitle)
   };
 
   const mismatches = [
+    actual.kind !== expected.kind ? `kind=${actual.kind ?? 'missing'}` : null,
     actual.doi !== expected.doi ? `doi=${actual.doi ?? 'missing'}` : null,
     actual.title !== expected.title ? 'title' : null,
-    expected.abstract !== null && actual.abstract !== expected.abstract ? 'abstract' : null,
-    expected.abstractLanguage !== null && actual.abstractLanguage !== expected.abstractLanguage ? 'abstractLanguage' : null,
+    actual.abstract !== expected.abstract ? 'abstract' : null,
+    actual.abstractLanguage !== expected.abstractLanguage ? 'abstractLanguage' : null,
+    actual.language !== expected.language ? 'language' : null,
     actual.publicationDate !== expected.publicationDate ? `publicationDate=${actual.publicationDate ?? 'missing'}` : null,
-    expected.publisher !== null && (actual.publisher !== expected.publisher || actual.institution !== expected.publisher) ? 'publisher' : null,
-    expected.creators.length > 0 && !sameStringArray(actual.creators, expected.creators) ? 'creators' : null,
-    actual.resourceUrl !== expected.resourceUrl ? 'resourceUrl' : null
+    actual.publisher !== expected.publisher ? 'publisher' : null,
+    actual.institution !== expected.institution ? 'institution' : null,
+    expected.containerTitle !== null && actual.containerTitle !== expected.containerTitle ? 'containerTitle' : null,
+    expected.componentType !== null && actual.componentType !== expected.componentType ? 'componentType' : null,
+    expected.postedContentType !== null && actual.postedContentType !== expected.postedContentType ? 'postedContentType' : null,
+    !sameStringArray(actual.creators, expected.creators) ? 'creators' : null,
+    actual.resourceUrl !== expected.resourceUrl ? 'resourceUrl' : null,
+    !sameStringArray(actual.issns, expected.issns) ? 'issns' : null,
+    !sameStringArray(actual.isbns, expected.isbns) ? 'isbns' : null,
+    actual.volume !== expected.volume ? 'volume' : null,
+    actual.issue !== expected.issue ? 'issue' : null,
+    actual.pages !== expected.pages ? 'pages' : null,
+    actual.edition !== expected.edition ? 'edition' : null,
+    actual.componentNumber !== expected.componentNumber ? 'componentNumber' : null,
+    actual.conferenceName !== expected.conferenceName ? 'conferenceName' : null,
+    actual.conferenceAcronym !== expected.conferenceAcronym ? 'conferenceAcronym' : null,
+    actual.conferenceLocation !== expected.conferenceLocation ? 'conferenceLocation' : null,
+    actual.conferenceDate !== expected.conferenceDate ? 'conferenceDate' : null,
+    actual.degree !== expected.degree ? 'degree' : null,
+    actual.itemNumber !== expected.itemNumber ? 'itemNumber' : null,
+    actual.version !== expected.version ? 'version' : null,
+    actual.standardsBodyAcronym !== expected.standardsBodyAcronym ? 'standardsBodyAcronym' : null,
+    actual.designator !== expected.designator ? 'designator' : null,
+    actual.groupTitle !== expected.groupTitle ? 'groupTitle' : null
   ].filter((entry): entry is string => Boolean(entry));
 
   if (mismatches.length === 0) {
@@ -397,10 +454,110 @@ function verifyXmlApiRecord(input: {
   };
 }
 
+function expectedPublisher(record: CrossrefMappedRecord): string | undefined {
+  switch (record.kind) {
+    case 'book':
+    case 'book-component':
+    case 'conference-paper':
+      return record.publisher;
+    case 'report':
+    case 'dataset':
+      return record.publisher;
+    case 'standard':
+      return record.publisher;
+    default:
+      return undefined;
+  }
+}
+
+function expectedTypeDetails(record: CrossrefMappedRecord): {
+  readonly issns: readonly string[];
+  readonly isbns: readonly string[];
+  readonly volume: string | null;
+  readonly issue: string | null;
+  readonly pages: string | null;
+  readonly edition: string | null;
+  readonly componentNumber: string | null;
+  readonly conferenceName: string | null;
+  readonly conferenceAcronym: string | null;
+  readonly conferenceLocation: string | null;
+  readonly conferenceDate: string | null;
+  readonly degree: string | null;
+  readonly itemNumber: string | null;
+  readonly version: string | null;
+  readonly standardsBodyAcronym: string | null;
+  readonly designator: string | null;
+  readonly groupTitle: string | null;
+} {
+  return {
+    issns: record.kind === 'journal-article' ? normalizeStringArray(record.issns) : [],
+    isbns: 'isbns' in record ? normalizeStringArray(record.isbns) : [],
+    volume: record.kind === 'journal-article' ? normalizeText(record.volume) : null,
+    issue: record.kind === 'journal-article' ? normalizeText(record.issue) : null,
+    pages: 'pages' in record ? normalizePages(record.pages) : null,
+    edition: 'edition' in record ? normalizeText(record.edition) : null,
+    componentNumber: record.kind === 'book-component' ? normalizeText(record.componentNumber) : null,
+    conferenceName: record.kind === 'conference-paper' ? normalizeText(record.conferenceName) : null,
+    conferenceAcronym: record.kind === 'conference-paper' ? normalizeText(record.conferenceAcronym) : null,
+    conferenceLocation: record.kind === 'conference-paper' ? normalizeText(record.conferenceLocation) : null,
+    conferenceDate: record.kind === 'conference-paper' ? normalizeText(record.conferenceDate) : null,
+    degree: record.kind === 'dissertation' ? normalizeText(record.degree) : null,
+    itemNumber: record.kind === 'report' || record.kind === 'posted-content'
+      ? normalizeText(record.itemNumber)
+      : null,
+    version: record.kind === 'dataset' ? normalizeText(record.version) : null,
+    standardsBodyAcronym: record.kind === 'standard' ? normalizeText(record.standardsBodyAcronym) : null,
+    designator: record.kind === 'standard' ? normalizeText(record.designator) : null,
+    groupTitle: record.kind === 'posted-content' ? normalizeText(record.hostingIdentity) : null
+  };
+}
+
+function expectedInstitution(record: CrossrefMappedRecord): string | undefined {
+  switch (record.kind) {
+    case 'dissertation':
+      return record.institution;
+    case 'report':
+    case 'dataset':
+      return record.institution;
+    case 'standard':
+      return record.standardsBody;
+    case 'posted-content':
+      return record.hostingIdentity;
+    case 'journal-article':
+    case 'book':
+    case 'book-component':
+    case 'conference-paper':
+      return undefined;
+  }
+}
+
+function expectedContainerTitle(record: CrossrefMappedRecord): string | undefined {
+  switch (record.kind) {
+    case 'journal-article':
+      return record.journalTitle;
+    case 'book-component':
+      return record.bookTitle;
+    case 'conference-paper':
+      return record.proceedingsTitle;
+    case 'dataset':
+      return record.databaseTitle;
+    default:
+      return undefined;
+  }
+}
+
 function verifyXmlApiRelation(input: {
   readonly record: CrossrefUnixrefRecord;
-  readonly relation: CrossrefRelation;
+  readonly relation: CrossrefDepositRelation;
 }): CrossrefXmlApiVerification {
+  if (input.relation === 'delete-all') {
+    return (input.record.relations?.length ?? 0) === 0
+      ? { status: 'matched', record: input.record }
+      : {
+          status: 'pending', record: input.record,
+          reason: 'Crossref XML API metadata has not caught up: relations=not-cleared'
+        };
+  }
   if (hasExpectedRelation(input.record.relations ?? [], input.relation)) {
     return {
       status: 'matched',
@@ -423,6 +580,7 @@ function hasExpectedRelation(
     relation.type === expected.type
     && relation.identifierType?.toLowerCase() === expected.identifierType
     && normalizeRelationIdentifier(relation.identifier, expected.identifierType) === normalizeRelationIdentifier(expected.identifier, expected.identifierType)
+    && normalizeText(relation.description) === normalizeText(expected.description)
   ));
 }
 
@@ -451,11 +609,20 @@ function normalizeText(value: string | null | undefined): string | null {
   return text ? text : null;
 }
 
+function normalizeStringArray(values: readonly string[]): readonly string[] {
+  return values.map((value) => normalizeText(value) ?? '').filter(Boolean).sort(compareCodeUnits);
+}
+
+function normalizePages(value: { readonly first: string; readonly last?: string | undefined } | undefined): string | null {
+  if (!value) return null;
+  return [normalizeText(value.first), normalizeText(value.last)].filter(Boolean).join('-') || null;
+}
+
 function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function crossrefCreatorSignatures(creators: readonly CanonicalCreator[] | NonNullable<CrossrefUnixrefRecord['creators']>): readonly string[] {
+function crossrefCreatorSignatures(creators: readonly PublicationCreator[] | NonNullable<CrossrefUnixrefRecord['creators']>): readonly string[] {
   return creators
     .map((creator) => {
       const creatorType = crossrefContributorRole(creator.creatorType);
@@ -463,12 +630,20 @@ function crossrefCreatorSignatures(creators: readonly CanonicalCreator[] | NonNu
         const givenName = normalizeText(creator.givenName);
         const familyName = normalizeText(creator.familyName) ?? normalizeText(creator.name);
         const name = [familyName, givenName].filter((part): part is string => Boolean(part)).join(', ');
-        return ['personal', creatorType, normalizeText(name) ?? '', givenName ?? '', familyName ?? ''].join('\u001F');
+        return [
+          'personal', creatorType, normalizeText(name) ?? '', givenName ?? '', familyName ?? '',
+          normalizeText(creator.affiliation) ?? '', normalizeOrcid(creator.orcid) ?? ''
+        ].join('\u001F');
       }
 
       return ['organizational', creatorType, normalizeText(creator.name) ?? ''].join('\u001F');
     })
     .sort(compareCodeUnits);
+}
+
+function normalizeOrcid(value: string | null | undefined): string | null {
+  const text = normalizeText(value)?.replace(/^https?:\/\/orcid\.org\//iu, '').toUpperCase();
+  return text ?? null;
 }
 
 async function assertCrossrefOk(response: CrossrefResponseLike): Promise<void> {

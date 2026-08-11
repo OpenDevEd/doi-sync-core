@@ -41,14 +41,14 @@ describe('provider resilience', () => {
       attempts += 1;
       if (attempts < 3) {
         throw new ProviderHttpError({
-          provider: 'zotero',
+          provider: 'zenodo',
           status: 503,
           body: 'temporarily unavailable'
         });
       }
       return Promise.resolve('ok');
     }, {
-      provider: 'zotero',
+      provider: 'zenodo',
       retries: 3,
       minTimeoutMs: 0,
       maxTimeoutMs: 0,
@@ -150,9 +150,9 @@ describe('provider resilience', () => {
   });
 
   it('runs provider operations through the configured limiter before retrying', async () => {
-    const zoteroLimiter = new RecordingLimiter('zotero');
+    const zenodoLimiter = new RecordingLimiter('zenodo');
     const runner: ProviderOperationRunner = new ResilientProviderOperationRunner({
-      limiters: new Map([['zotero', zoteroLimiter]]),
+      limiters: new Map([['zenodo', zenodoLimiter]]),
       retry: {
         retries: 0,
         minTimeoutMs: 0,
@@ -161,16 +161,16 @@ describe('provider resilience', () => {
       }
     });
 
-    await expect(runner.run('zotero', () => Promise.resolve(42))).resolves.toBe(42);
+    await expect(runner.run('zenodo', () => Promise.resolve(42))).resolves.toBe(42);
     await runner.close();
 
-    expect(zoteroLimiter.providers).toEqual(['zotero', 'zotero:stopped']);
+    expect(zenodoLimiter.providers).toEqual(['zenodo', 'zenodo:stopped']);
   });
 
   it('keeps a direct operation runner for unit tests and dry wiring checks', async () => {
     const runner = new DirectProviderOperationRunner();
 
-    await expect(runner.run('clerk', () => Promise.resolve('done'))).resolves.toBe('done');
+    await expect(runner.run('crossref', () => Promise.resolve('done'))).resolves.toBe('done');
     await expect(runner.close()).resolves.toBeUndefined();
   });
 });

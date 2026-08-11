@@ -1,4 +1,4 @@
-export type ProviderName = 'clerk' | 'crossref' | 'zenodo' | 'zotero';
+export type ProviderName = 'crossref' | 'zenodo';
 
 export interface ProviderHttpErrorInput {
   readonly provider: ProviderName;
