@@ -87,6 +87,7 @@ export type {
 	ZenodoProviderIdentifiers,
 	ZenodoProviderSyncState
 } from './publication/state.js';
+export { parseProviderSyncState } from './publication/state.js';
 export { parsePublicationTargetPolicy } from './publication/targets.js';
 export type {
 	CrossrefTargetPolicy,

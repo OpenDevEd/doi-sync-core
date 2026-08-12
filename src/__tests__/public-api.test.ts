@@ -32,6 +32,7 @@ const expectedRuntimeExports = [
 	'parsePublicationIdentifiers',
 	'parsePublicationRecordSnapshot',
 	'parsePublicationTargetPolicy',
+	'parseProviderSyncState',
 	'planPublicationSync',
 	'retryAfterMsFromHeaders',
 	'resolveDoiCandidates',
