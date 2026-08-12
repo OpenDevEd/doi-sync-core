@@ -1,4 +1,5 @@
-export type ProviderName = 'crossref' | 'zenodo';
+/** Name used to keep retries, limits, and logs separate for each outside service. */
+export type ProviderName = string;
 
 export interface ProviderHttpErrorInput {
   readonly provider: ProviderName;
@@ -55,7 +56,9 @@ export function retryAfterMsFromHeaders(headers: ProviderResponseHeaders | undef
   const value = headers?.get('retry-after')?.trim();
   if (!value) return undefined;
   const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  if (Number.isFinite(seconds)) {
+    return seconds >= 0 ? Math.round(seconds * 1000) : undefined;
+  }
   const dateMs = Date.parse(value);
   if (!Number.isFinite(dateMs)) return undefined;
   return Math.max(0, dateMs - Date.now());

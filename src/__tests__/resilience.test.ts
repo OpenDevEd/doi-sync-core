@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ProviderHttpError, isRetryableHttpStatus } from '../resilience/errors.js';
+import {
+  ProviderHttpError,
+  isRetryableHttpStatus,
+  retryAfterMsFromHeaders
+} from '../resilience/errors.js';
 import { DirectProviderOperationRunner, ResilientProviderOperationRunner, type ProviderOperationRunner } from '../resilience/provider-runner.js';
 import { retryProviderOperation } from '../resilience/retry.js';
 import type { ProviderRateLimiter } from '../resilience/rate-limit.js';
@@ -32,6 +36,29 @@ describe('provider resilience', () => {
     expect(isRetryableHttpStatus(409)).toBe(false);
     expect(isRetryableHttpStatus(401)).toBe(false);
     expect(isRetryableHttpStatus(404)).toBe(false);
+  });
+
+  it('parses Retry-After seconds', () => {
+    expect(retryAfterMsFromHeaders({ get: () => '1.5' })).toBe(1_500);
+  });
+
+  it('parses Retry-After dates and clamps dates in the past', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-12T00:00:00.000Z'));
+
+    expect(retryAfterMsFromHeaders({
+      get: () => 'Wed, 12 Aug 2026 00:01:00 GMT'
+    })).toBe(60_000);
+    expect(retryAfterMsFromHeaders({
+      get: () => 'Tue, 11 Aug 2026 23:59:00 GMT'
+    })).toBe(0);
+  });
+
+  it('ignores missing, invalid, and negative Retry-After values', () => {
+    expect(retryAfterMsFromHeaders(undefined)).toBeUndefined();
+    expect(retryAfterMsFromHeaders({ get: () => null })).toBeUndefined();
+    expect(retryAfterMsFromHeaders({ get: () => 'not-a-delay' })).toBeUndefined();
+    expect(retryAfterMsFromHeaders({ get: () => '-10' })).toBeUndefined();
   });
 
   it('retries retryable provider errors and returns the eventual result', async () => {
@@ -165,6 +192,24 @@ describe('provider resilience', () => {
     await runner.close();
 
     expect(zenodoLimiter.providers).toEqual(['zenodo', 'zenodo:stopped']);
+  });
+
+  it('lets consumers name and limit services outside the publication providers', async () => {
+    const zoteroLimiter = new RecordingLimiter('zotero');
+    const runner: ProviderOperationRunner = new ResilientProviderOperationRunner({
+      limiters: new Map([['zotero', zoteroLimiter]]),
+      retry: {
+        retries: 0,
+        minTimeoutMs: 0,
+        maxTimeoutMs: 0,
+        randomize: false
+      }
+    });
+
+    await expect(runner.run('zotero', () => Promise.resolve('read'))).resolves.toBe('read');
+    await runner.close();
+
+    expect(zoteroLimiter.providers).toEqual(['zotero', 'zotero:stopped']);
   });
 
   it('keeps a direct operation runner for unit tests and dry wiring checks', async () => {

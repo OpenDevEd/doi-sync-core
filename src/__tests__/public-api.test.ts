@@ -33,6 +33,7 @@ const expectedRuntimeExports = [
 	'parsePublicationRecordSnapshot',
 	'parsePublicationTargetPolicy',
 	'planPublicationSync',
+	'retryAfterMsFromHeaders',
 	'resolveDoiCandidates',
 	'settlePublicationSyncState'
 ].sort();

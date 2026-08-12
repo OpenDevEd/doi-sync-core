@@ -130,8 +130,12 @@ export type {
 } from './settlement.js';
 export { createNoopLogger } from './logging.js';
 export type { CoreLogger, LogFields, LogPrimitive, LogValue } from './logging.js';
-export { ProviderHttpError } from './resilience/errors.js';
-export type { ProviderHttpErrorInput, ProviderName } from './resilience/errors.js';
+export { ProviderHttpError, retryAfterMsFromHeaders } from './resilience/errors.js';
+export type {
+	ProviderHttpErrorInput,
+	ProviderName,
+	ProviderResponseHeaders
+} from './resilience/errors.js';
 export {
 	DirectProviderOperationRunner,
 	ResilientProviderOperationRunner
