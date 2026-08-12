@@ -1,7 +1,11 @@
 import type { JsonValue } from './hash.js';
 import { isCrossrefOperation, isZenodoOperation } from './operations.js';
 import type { PublicationSyncOperation, PublicationSyncPlan } from './planner.js';
-import type { ProviderSyncState, ZenodoProviderIdentifiers } from './publication/state.js';
+import type {
+	ProviderSyncFailureProvider,
+	ProviderSyncState,
+	ZenodoProviderIdentifiers
+} from './publication/state.js';
 
 export interface CrossrefPendingSettlement {
 	readonly stage: 'relation_clear' | 'deposit';
@@ -73,6 +77,27 @@ export interface SettlePublicationSyncInput {
 
 export interface PublicationSyncSettlement {
 	readonly statePatch: ProviderSyncStatePatch;
+}
+
+export interface SettleProviderSyncFailureInput {
+	readonly previousState?: ProviderSyncState;
+	readonly provider: ProviderSyncFailureProvider;
+	readonly failureClass: string;
+	readonly failureSummary: string;
+}
+
+/** Creates a durable failure patch for errors outside a provider plan. */
+export function settleProviderSyncFailure(
+	input: SettleProviderSyncFailureInput
+): ProviderSyncStatePatch {
+	return {
+		failure: nextFailure(
+			input.previousState,
+			input.provider,
+			input.failureClass,
+			input.failureSummary
+		)
+	};
 }
 
 /** Advances only last-success provider state represented by successful operations. */
@@ -276,7 +301,7 @@ function providerForOperation(type: PublicationSyncOperation['type']): 'crossref
 
 function nextFailure(
 	state: ProviderSyncState | undefined,
-	provider: 'crossref' | 'zenodo',
+	provider: ProviderSyncFailureProvider,
 	failureClass: string,
 	summary: string
 ): NonNullable<ProviderSyncState['failure']> {

@@ -61,4 +61,18 @@ describe('provider sync state storage parser', () => {
       }
     })).toThrow();
   });
+
+  it.each(['crossref', 'zenodo', 'source', 'worker'] as const)(
+    'accepts %s as a durable failure source',
+    (provider) => {
+      expect(parseProviderSyncState({
+        failure: {
+          provider,
+          failureClass: 'SYNC_FAILED',
+          summary: 'The record could not be synced',
+          consecutiveCount: 1
+        }
+      }).failure?.provider).toBe(provider);
+    }
+  );
 });

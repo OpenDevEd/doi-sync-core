@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { planPublicationSync } from '../planner.js';
-import { settlePublicationSyncState } from '../settlement.js';
+import { settleProviderSyncFailure, settlePublicationSyncState } from '../settlement.js';
 
 const observedAt = new Date('2026-05-20T00:00:00.000Z');
 
@@ -30,6 +30,29 @@ function publicationPlan() {
 }
 
 describe('provider-neutral settlement', () => {
+	it('records host failures with the same consecutive counter used for provider failures', () => {
+		expect(settleProviderSyncFailure({
+			previousState: {
+				failure: {
+					provider: 'source',
+					failureClass: 'ZOTERO_UNAVAILABLE',
+					summary: 'Zotero could not be read',
+					consecutiveCount: 2
+				}
+			},
+			provider: 'worker',
+			failureClass: 'STATE_WRITE_FAILED',
+			failureSummary: 'The worker state could not be saved'
+		})).toEqual({
+			failure: {
+				provider: 'worker',
+				failureClass: 'STATE_WRITE_FAILED',
+				summary: 'The worker state could not be saved',
+				consecutiveCount: 3
+			}
+		});
+	});
+
 	it('attributes Zenodo planning failures to Zenodo', () => {
 		const plan = planPublicationSync({
 			record: {

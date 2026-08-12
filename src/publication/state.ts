@@ -57,12 +57,14 @@ export interface ProviderSyncState {
   readonly crossref?: CrossrefProviderSyncState;
   readonly zenodo?: ZenodoProviderSyncState;
   readonly failure?: {
-    readonly provider: 'crossref' | 'zenodo';
+    readonly provider: ProviderSyncFailureProvider;
     readonly failureClass: string;
     readonly summary: string;
     readonly consecutiveCount: number;
   };
 }
+
+export type ProviderSyncFailureProvider = 'crossref' | 'zenodo' | 'source' | 'worker';
 
 const crossrefProviderSyncStateSchema = z.object({
   environment: z.enum(['test', 'production']),
@@ -119,7 +121,7 @@ const providerSyncStateSchema = z.object({
   crossref: crossrefProviderSyncStateSchema.optional(),
   zenodo: zenodoProviderSyncStateSchema.optional(),
   failure: z.object({
-    provider: z.enum(['crossref', 'zenodo']),
+    provider: z.enum(['crossref', 'zenodo', 'source', 'worker']),
     failureClass: z.string().min(1),
     summary: z.string().min(1),
     consecutiveCount: z.number().int().nonnegative()

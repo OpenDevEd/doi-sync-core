@@ -83,6 +83,7 @@ export type {
 } from './publication/record.js';
 export type {
 	CrossrefProviderSyncState,
+	ProviderSyncFailureProvider,
 	ProviderSyncState,
 	ZenodoProviderIdentifiers,
 	ZenodoProviderSyncState
@@ -119,12 +120,13 @@ export type {
 	PublicationPayloadSnapshots
 } from './snapshots.js';
 
-export { settlePublicationSyncState } from './settlement.js';
+export { settleProviderSyncFailure, settlePublicationSyncState } from './settlement.js';
 export type {
 	CrossrefPendingSettlement,
 	ProviderSyncStatePatch,
 	PublicationSyncOperationResult,
 	PublicationSyncSettlement,
+	SettleProviderSyncFailureInput,
 	SettlePublicationSyncInput,
 	ZenodoOrphanDraftCleanup,
 	ZenodoSettlementIdentifiers

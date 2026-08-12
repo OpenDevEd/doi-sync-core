@@ -36,6 +36,7 @@ const expectedRuntimeExports = [
 	'planPublicationSync',
 	'retryAfterMsFromHeaders',
 	'resolveDoiCandidates',
+	'settleProviderSyncFailure',
 	'settlePublicationSyncState'
 ].sort();
 
