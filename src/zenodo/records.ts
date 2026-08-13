@@ -21,6 +21,13 @@ export interface ZenodoLegacyDepositionPayload {
   readonly metadata: Readonly<Record<string, JsonValue>>;
 }
 
+export function parseZenodoLegacyDepositionPayload(input: unknown): ZenodoLegacyDepositionPayload {
+  const payload = asRecord(input);
+  const metadata = asJsonObject(toJsonValue(asRecord(payload?.['metadata']) ?? null));
+  if (!metadata) throw new Error('Expected Zenodo legacy deposition payload with metadata object');
+  return { metadata };
+}
+
 export interface ZenodoRecordIdentifiers {
   readonly latestRecordId: string;
   readonly parentId: string;

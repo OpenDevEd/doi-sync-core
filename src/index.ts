@@ -155,6 +155,7 @@ export type {
 	FindZenodoDraftByDoiInput,
 	FindZenodoRecordByDoiInput,
 	ReadZenodoRecordSnapshotInput,
+	VerifyZenodoPublishedStateInput,
 	VerifyZenodoRecordInput,
 	ZenodoAdoptLegacyDepositionInput,
 	ZenodoApiClientOptions,
@@ -162,6 +163,7 @@ export type {
 	ZenodoCreateRecordInput,
 	ZenodoFetchLike,
 	ZenodoResponseLike,
+	ZenodoRemoteStateVerification,
 	ZenodoUpdateRecordMetadataInput,
 	ZenodoUploadFile
 } from './zenodo/client.js';
@@ -182,7 +184,11 @@ export type {
 	ZenodoPublicationType,
 	ZenodoResourceType
 } from './zenodo/resource-mapper.js';
-export { buildZenodoWritePayload, ZENODO_INVENIORDM_ACCEPT } from './zenodo/records.js';
+export {
+	buildZenodoWritePayload,
+	parseZenodoLegacyDepositionPayload,
+	ZENODO_INVENIORDM_ACCEPT
+} from './zenodo/records.js';
 export type {
 	DoiPolicy,
 	ZenodoDoiLookupResult,
@@ -196,3 +202,12 @@ export type {
 	ZenodoVerificationResult,
 	ZenodoWritePayloadInput
 } from './zenodo/records.js';
+export {
+	parseZenodoLegacyDepositionFiles,
+	verifyZenodoLegacyDepositionState
+} from './zenodo/verification.js';
+export type {
+	ZenodoExpectedPublishedFile,
+	ZenodoLegacyDepositionFile,
+	ZenodoPublishedStateVerification
+} from './zenodo/verification.js';

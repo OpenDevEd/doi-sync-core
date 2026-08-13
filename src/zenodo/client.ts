@@ -7,6 +7,13 @@ import type { JsonValue } from '../hash.js';
 import { ProviderHttpError, retryAfterMsFromHeaders, type ProviderResponseHeaders } from '../resilience/errors.js';
 import { DirectProviderOperationRunner, type ProviderOperationRunner } from '../resilience/provider-runner.js';
 import { asRecord, asString, idString } from '../guards.js';
+import {
+  parseZenodoLegacyDepositionFiles,
+  verifyZenodoLegacyDepositionState,
+  type ZenodoExpectedPublishedFile,
+  type ZenodoLegacyDepositionFile,
+  type ZenodoPublishedStateVerification
+} from './verification.js';
 
 export interface ZenodoResponseLike {
   readonly ok: boolean;
@@ -40,6 +47,17 @@ export interface ReadZenodoRecordSnapshotInput {
   readonly token: string;
   readonly recordId: string;
 }
+
+export interface VerifyZenodoPublishedStateInput {
+  readonly token: string;
+  readonly recordId: string;
+  readonly expectedPayload: ZenodoLegacyDepositionPayload;
+  readonly files: readonly ZenodoExpectedPublishedFile[];
+}
+
+export type ZenodoRemoteStateVerification =
+  | ZenodoPublishedStateVerification
+  | { readonly status: 'missing' };
 
 export interface ZenodoUploadFile {
   readonly key: string;
@@ -176,6 +194,23 @@ export class ZenodoApiClient {
     }, { allowedStatuses: [404] });
     if (response.status === 404) return null;
     return parseZenodoRecordSnapshot(await response.json());
+  }
+
+  async verifyPublishedState(input: VerifyZenodoPublishedStateInput): Promise<ZenodoRemoteStateVerification> {
+    const response = await this.request(
+      `${this.endpoint}/api/deposit/depositions/${encodeURIComponent(input.recordId)}`,
+      {
+        method: 'GET',
+        headers: authHeaders(input.token)
+      },
+      { allowedStatuses: [404] }
+    );
+    if (response.status === 404) return { status: 'missing' };
+    return verifyZenodoLegacyDepositionState({
+      response: await response.json(),
+      expectedPayload: input.expectedPayload,
+      expectedFiles: input.files
+    });
   }
 
   async createRecord(input: ZenodoCreateRecordInput): Promise<ZenodoRecordIdentifiers> {
@@ -423,12 +458,12 @@ export class ZenodoApiClient {
     }
   }
 
-  private async listLegacyDepositionFiles(token: string, depositionId: string): Promise<readonly ZenodoDepositionFile[]> {
+  private async listLegacyDepositionFiles(token: string, depositionId: string): Promise<readonly ZenodoLegacyDepositionFile[]> {
     const response = await this.request(`${this.endpoint}/api/deposit/depositions/${encodeURIComponent(depositionId)}/files`, {
       method: 'GET',
       headers: authHeaders(token)
     });
-    return parseDepositionFiles(await response.json());
+    return parseZenodoLegacyDepositionFiles(await response.json());
   }
 
   private async updateDepositionMetadata(token: string, depositionId: string, payload: ZenodoLegacyDepositionPayload): Promise<void> {
@@ -621,11 +656,6 @@ interface ZenodoDeposition {
   readonly metadata?: Readonly<Record<string, JsonValue>>;
 }
 
-interface ZenodoDepositionFile {
-  readonly id: string;
-  readonly filename: string;
-}
-
 function buildDepositionPayloads(
   deposition: ZenodoDeposition,
   input: ZenodoCreateRecordInput | ZenodoUpdateRecordMetadataInput
@@ -801,18 +831,6 @@ function parseOptionalDeposition(response: unknown): ZenodoDeposition | null {
   } catch {
     return null;
   }
-}
-
-function parseDepositionFiles(response: unknown): readonly ZenodoDepositionFile[] {
-  if (!Array.isArray(response)) throw new Error('Expected Zenodo deposition files array');
-  return response.map((entry) => {
-    const file = asRecord(entry);
-    const id = asString(file?.['id']);
-    if (!id) throw new Error('Expected Zenodo deposition file id');
-    const filename = asString(file?.['filename']) ?? asString(file?.['name']);
-    if (!filename) throw new Error('Expected Zenodo deposition file filename');
-    return { id, filename };
-  });
 }
 
 function parseInvenioRecordDraft(response: unknown): InvenioRecordDraft {

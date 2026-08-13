@@ -33,11 +33,14 @@ const expectedRuntimeExports = [
 	'parsePublicationRecordSnapshot',
 	'parsePublicationTargetPolicy',
 	'parseProviderSyncState',
+	'parseZenodoLegacyDepositionPayload',
+	'parseZenodoLegacyDepositionFiles',
 	'planPublicationSync',
 	'retryAfterMsFromHeaders',
 	'resolveDoiCandidates',
 	'settleProviderSyncFailure',
-	'settlePublicationSyncState'
+	'settlePublicationSyncState',
+	'verifyZenodoLegacyDepositionState'
 ].sort();
 
 describe('public API surface', () => {
