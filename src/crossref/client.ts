@@ -353,15 +353,16 @@ function verifyXmlApiRecord(input: {
     };
   }
 
+  const abstractLanguage = input.expected.metadata.abstract && input.expected.kind !== 'dataset'
+    ? normalizeLanguage(input.expected.metadata.language ?? 'en')
+    : null;
   const expected = {
     kind: input.expected.kind,
     doi: normalizeDoi(input.expected.metadata.doi),
     title: normalizeText(input.expected.metadata.title),
     abstract: normalizeText(input.expected.metadata.abstract),
-    abstractLanguage: input.expected.metadata.abstract && input.expected.kind !== 'dataset'
-      ? normalizeLanguage(input.expected.metadata.language)
-      : null,
-    language: normalizeLanguage(input.expected.metadata.language),
+    abstractLanguage,
+    language: normalizeLanguage(input.expected.metadata.language) ?? abstractLanguage,
     publicationDate: input.expected.metadata.publicationDate,
     publisher: normalizeText(expectedPublisher(input.expected)),
     institution: normalizeText(expectedInstitution(input.expected)),

@@ -708,7 +708,7 @@ describe('CrossrefApiClient', () => {
       status: 'pending',
       xmlVerification: {
         status: 'pending',
-        reason: 'Crossref XML API metadata has not caught up: abstract, abstractLanguage, language'
+        reason: 'Crossref XML API metadata has not caught up: abstract'
       }
     });
   });
@@ -754,6 +754,42 @@ describe('CrossrefApiClient', () => {
       status: 'pending',
       reason: 'Crossref XML API metadata has not caught up: abstract, abstractLanguage, language, creators'
     });
+  });
+
+  it('accepts the default English language written for an abstract without a supplied language', async () => {
+    const fetch: CrossrefFetchLike = () => Promise.resolve(textResponse(`
+      <doi_records>
+        <doi_record>
+          <crossref>
+            <report-paper>
+              <report-paper_metadata>
+                <titles><title>Evidence report</title></titles>
+                <jats:abstract xml:lang="en"><jats:p>Current abstract.</jats:p></jats:abstract>
+                <publication_date media_type="online"><month>05</month><day>20</day><year>2026</year></publication_date>
+                <publisher><publisher_name>Open Development &amp; Education</publisher_name></publisher>
+                <institution><institution_name>Open Development &amp; Education</institution_name></institution>
+                <doi_data>
+                  <doi>10.53832/opendeved.1205</doi>
+                  <resource>https://my.educationevidence.io/lib/record/ABC12345</resource>
+                </doi_data>
+              </report-paper_metadata>
+            </report-paper>
+          </crossref>
+        </doi_record>
+      </doi_records>
+    `));
+    const client = new CrossrefApiClient({ fetch, poll: { maxAttempts: 1, delayMs: 0 } });
+
+    await expect(client.verifyPublication(publicationInput({
+      environment: 'test',
+      emailAddress: 'depositor@example.org',
+      metadata: {
+        doi: '10.53832/opendeved.1205', itemType: 'Report', title: 'Evidence report',
+        abstract: 'Current abstract.', publicationDate: '2026-05-20',
+        publisher: 'Open Development & Education', creators: [], tags: []
+      },
+      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
+    }))).resolves.toMatchObject({ status: 'matched' });
   });
 
   it('keeps production deposits pending when Crossref XML API still has stale deposited contributors or publisher', async () => {
