@@ -8,11 +8,11 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "default": "./dist/index.js"
     },
     "./display": {
       "types": "./dist/display.d.ts",
-      "import": "./dist/display.js"
+      "default": "./dist/display.js"
     }
   },
   "files": [
@@ -33,10 +33,11 @@
     "prepare": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run crossref:languages:check && npm run lint && npm run typecheck && npm test && npm run build"
+    "verify": "npm run crossref:languages:check && npm run lint && npm run typecheck && npm test && npm run build && npm run verify:package-exports",
+    "verify:package-exports": "node scripts/verify-package-exports.mjs"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "bottleneck": "^2.19.5",
