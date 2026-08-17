@@ -133,11 +133,17 @@ describe('Zenodo records', () => {
 	it('parses published record and concept identifiers', () => {
 		expect(parseZenodoRecordIdentifiers({
 			id: '42', parent: { id: '41', pids: { doi: { identifier: '10.5281/zenodo.41' } } },
-			pids: { doi: { identifier: '10.5281/zenodo.42' } }, links: { self_html: 'https://zenodo.org/records/42' }
+			pids: { doi: { identifier: '10.5281/zenodo.42' } },
+			created: '2026-04-20T09:30:00.000Z',
+			links: { self_html: 'https://zenodo.org/records/42' }
 		})).toEqual({
 			latestRecordId: '42', parentId: '41', versionDoi: '10.5281/zenodo.42',
-			conceptDoi: '10.5281/zenodo.41', links: { selfHtml: 'https://zenodo.org/records/42' }
+			conceptDoi: '10.5281/zenodo.41', publishedAt: new Date('2026-04-20T09:30:00.000Z'),
+			links: { selfHtml: 'https://zenodo.org/records/42' }
 		});
+		expect(() => parseZenodoRecordIdentifiers({
+			id: '42', parent: { id: '41' }
+		})).toThrow('created publication time');
 	});
 
 	it('parses only unpublished legacy depositions', () => {

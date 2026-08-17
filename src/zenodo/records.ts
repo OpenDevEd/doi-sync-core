@@ -31,6 +31,7 @@ export function parseZenodoLegacyDepositionPayload(input: unknown): ZenodoLegacy
 export interface ZenodoRecordIdentifiers {
   readonly latestRecordId: string;
   readonly parentId: string;
+  readonly publishedAt: Date;
   readonly versionDoi?: string;
   readonly conceptDoi?: string;
   readonly links: {
@@ -218,10 +219,12 @@ export function parseZenodoRecordIdentifiers(response: unknown): ZenodoRecordIde
   const links = asRecord(record['links']) ?? {};
   const versionDoi = pidIdentifier(pids, 'doi');
   const conceptDoi = pidIdentifier(parentPids, 'doi') ?? pidIdentifier(pids, 'concept-doi');
+  const publishedAt = parseRequiredPublicationTime(record['created']);
 
   return {
     latestRecordId: id,
     parentId,
+    publishedAt,
     ...(versionDoi ? { versionDoi } : {}),
     ...(conceptDoi ? { conceptDoi } : {}),
     links: {
@@ -232,6 +235,15 @@ export function parseZenodoRecordIdentifiers(response: unknown): ZenodoRecordIde
       ...optionalLink('versions', links['versions'])
     }
   };
+}
+
+function parseRequiredPublicationTime(value: unknown): Date {
+  const raw = asString(value);
+  const parsed = raw ? new Date(raw) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    throw new Error('Expected current InvenioRDM record shape with created publication time');
+  }
+  return parsed;
 }
 
 export function parseZenodoRecordSnapshot(response: unknown): ZenodoRecordSnapshot {

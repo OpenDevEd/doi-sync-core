@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { planPublicationSync } from '../planner.js';
-import { parsePublicationFileManifest } from '../publication/files.js';
+import { planPublicationSync } from './plan-fixture.js';
+import {
+  buildPublicationFileManifestHash,
+  parsePublicationFileManifest
+} from '../publication/files.js';
 import { parsePublicationRecordSnapshot } from '../publication/record.js';
 
 const SHA_A = 'a'.repeat(64);
@@ -378,6 +381,226 @@ describe('provider-neutral publication planner', () => {
     ]);
   });
 
+  it('requires exact approval before replacing files on a Crossref-backed Zenodo record', () => {
+    const baseline = planPublicationSync({
+      record: publicationRecord(),
+      files: fileManifest([file({ sha256: SHA_A })]),
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget()
+    });
+    if (baseline.status !== 'write_required' || !baseline.hashes.zenodoPayloadHash) {
+      throw new Error('expected Zenodo baseline');
+    }
+    const nextFiles = fileManifest([file({ sha256: SHA_B })]);
+    const state = {
+      zenodo: {
+        environment: 'sandbox' as const,
+        identifierPolicy: 'reuse-crossref' as const,
+        firstPublishedAt: new Date('2026-04-20T00:00:00.000Z'),
+        lastSuccess: {
+          payloadHash: baseline.hashes.zenodoPayloadHash,
+          fileManifestHash: baseline.hashes.fileManifestHash
+        },
+        identifiers: {
+          latestRecordId: '1205',
+          parentId: '1205',
+          versionDoi: '10.53832/opendeved.1205'
+        }
+      }
+    };
+
+    expect(planPublicationSync({
+      record: publicationRecord(), files: nextFiles,
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget(), state
+    })).toEqual({
+      status: 'needs_attention', provider: 'zenodo',
+      reason: 'ZENODO_FILE_CORRECTION_APPROVAL_REQUIRED', operations: []
+    });
+
+    const approval = {
+      id: 'approval-1', kind: 'minor_correction' as const, recordKey: 'REPORT01',
+      doi: '10.53832/opendeved.1205',
+      fileManifestHash: buildPublicationFileManifestHash(nextFiles),
+      approvedAt: new Date('2026-05-20T00:00:00.000Z')
+    };
+    const stateWithoutPublicationTime = {
+      environment: state.zenodo.environment,
+      identifierPolicy: state.zenodo.identifierPolicy,
+      lastSuccess: state.zenodo.lastSuccess,
+      identifiers: state.zenodo.identifiers
+    };
+    expect(planPublicationSync({
+      record: publicationRecord(), files: nextFiles,
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget(),
+      state: { zenodo: stateWithoutPublicationTime },
+      zenodoFileChangeApproval: approval
+    })).toEqual({
+      status: 'needs_attention', provider: 'zenodo',
+      reason: 'ZENODO_FIRST_PUBLICATION_TIME_REQUIRED', operations: []
+    });
+    const approved = planPublicationSync({
+      observedAt: new Date('2026-05-20T00:00:00.000Z'),
+      record: publicationRecord(), files: nextFiles,
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget(), state,
+      zenodoFileChangeApproval: approval
+    });
+
+    expect(approved.status).toBe('write_required');
+    expect('operations' in approved ? approved.operations : []).toEqual([{
+      type: 'zenodo_file_update',
+      latestRecordId: '1205',
+      payloadHash: baseline.hashes.zenodoPayloadHash,
+      fileManifestHash: approval.fileManifestHash,
+      removedFileKeys: [],
+      approval,
+      publishBy: new Date('2026-06-04T00:00:00.000Z')
+    }]);
+
+    expect(planPublicationSync({
+      record: publicationRecord(), files: nextFiles,
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget(),
+      state: {
+        zenodo: {
+          ...state.zenodo,
+          consumedFileCorrectionApprovalIds: ['approval-older', approval.id]
+        }
+      },
+      zenodoFileChangeApproval: approval
+    })).toEqual({
+      status: 'needs_attention', provider: 'zenodo',
+      reason: 'ZENODO_FILE_CORRECTION_APPROVAL_REQUIRED', operations: []
+    });
+  });
+
+  it('closes the Crossref-backed correction window after day 30', () => {
+    const baseline = planPublicationSync({
+      record: publicationRecord(), files: fileManifest([file({ sha256: SHA_A })]),
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget()
+    });
+    if (baseline.status !== 'write_required' || !baseline.hashes.zenodoPayloadHash) {
+      throw new Error('expected Zenodo baseline');
+    }
+    const nextFiles = fileManifest([file({ sha256: SHA_B })]);
+    const plan = planPublicationSync({
+      observedAt: new Date('2026-05-20T00:00:00.001Z'),
+      record: publicationRecord(), files: nextFiles,
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget(),
+      state: {
+        zenodo: {
+          environment: 'sandbox', identifierPolicy: 'reuse-crossref',
+          firstPublishedAt: new Date('2026-04-20T00:00:00.000Z'),
+          lastSuccess: {
+            payloadHash: baseline.hashes.zenodoPayloadHash,
+            fileManifestHash: baseline.hashes.fileManifestHash
+          },
+          identifiers: { latestRecordId: '1205', parentId: '1205' }
+        }
+      },
+      zenodoFileChangeApproval: {
+        id: 'approval-late', kind: 'minor_correction', recordKey: 'REPORT01',
+        doi: '10.53832/opendeved.1205',
+        fileManifestHash: buildPublicationFileManifestHash(nextFiles),
+        approvedAt: new Date('2026-05-20T00:00:00.001Z')
+      }
+    });
+
+    expect(plan).toEqual({
+      status: 'needs_attention', provider: 'zenodo',
+      reason: 'ZENODO_FILE_CORRECTION_WINDOW_CLOSED', operations: []
+    });
+  });
+
+  it('finishes an on-time approval after day 30 but before day 45', () => {
+    const initial = planPublicationSync({
+      record: publicationRecord(), files: fileManifest([file({ sha256: SHA_A })]),
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget()
+    });
+    if (initial.status !== 'write_required' || !initial.hashes.zenodoPayloadHash) {
+      throw new Error('expected Zenodo baseline');
+    }
+    const nextFiles = fileManifest([file({ sha256: SHA_B })]);
+    const plan = planPublicationSync({
+      observedAt: new Date('2026-05-21T00:00:00.000Z'),
+      record: publicationRecord(), files: nextFiles,
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget(),
+      state: {
+        zenodo: {
+          environment: 'sandbox', identifierPolicy: 'reuse-crossref',
+          firstPublishedAt: new Date('2026-04-20T00:00:00.000Z'),
+          lastSuccess: {
+            payloadHash: initial.hashes.zenodoPayloadHash,
+            fileManifestHash: initial.hashes.fileManifestHash
+          },
+          identifiers: { latestRecordId: '1205', parentId: '1205' }
+        }
+      },
+      zenodoFileChangeApproval: {
+        id: 'approval-on-time', kind: 'minor_correction', recordKey: 'REPORT01',
+        doi: '10.53832/opendeved.1205',
+        fileManifestHash: buildPublicationFileManifestHash(nextFiles),
+        approvedAt: new Date('2026-05-20T00:00:00.000Z')
+      }
+    });
+
+    expect(plan.status).toBe('write_required');
+    expect('operations' in plan ? plan.operations : []).toEqual([
+      expect.objectContaining({ type: 'zenodo_file_update' })
+    ]);
+  });
+
+  it('discards an unfinished file-correction draft after day 45', () => {
+    const approval = {
+      id: 'approval-1', kind: 'minor_correction' as const, recordKey: 'REPORT01',
+      doi: '10.53832/opendeved.1205', fileManifestHash: 'prepared-files',
+      approvedAt: new Date('2026-05-01T00:00:00.000Z')
+    };
+    const state = {
+      zenodo: {
+        environment: 'sandbox' as const, identifierPolicy: 'reuse-crossref' as const,
+        firstPublishedAt: new Date('2026-04-20T00:00:00.000Z'),
+        journal: {
+          operationType: 'zenodo_file_update' as const, depositionId: '42', draftRecordId: '42',
+          payloadHash: 'prepared-payload', fileManifestHash: 'prepared-files',
+          fileCorrectionApproval: approval, status: 'ready_to_publish' as const
+        }
+      }
+    };
+    const atDeadline = planPublicationSync({
+      observedAt: new Date('2026-06-04T00:00:00.000Z'),
+      record: publicationRecord(), files: fileManifest([]),
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget(), state
+    });
+    expect('operations' in atDeadline ? atDeadline.operations : []).toEqual([{
+      type: 'zenodo_publish_journaled_draft',
+      originalOperationType: 'zenodo_file_update', depositionId: '42', draftRecordId: '42',
+      payloadHash: 'prepared-payload', fileManifestHash: 'prepared-files',
+      fileCorrectionApproval: approval,
+      publishBy: new Date('2026-06-04T00:00:00.000Z')
+    }]);
+
+    const plan = planPublicationSync({
+      observedAt: new Date('2026-06-04T00:00:00.001Z'),
+      record: publicationRecord(), files: fileManifest([]),
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget(), state
+    });
+
+    expect('operations' in plan ? plan.operations : []).toEqual([{
+      type: 'zenodo_discard_expired_file_correction',
+      originalOperationType: 'zenodo_file_update',
+      depositionId: '42', draftRecordId: '42', reason: 'deadline_expired'
+    }]);
+  });
+
   it('uses the environment-matched settled Zenodo DOI instead of stale canonical input', () => {
     const zenodoBaseline = planPublicationSync({
       record: publicationRecord(), files: fileManifest(), identifiers: {},
@@ -457,6 +680,26 @@ describe('provider-neutral publication planner', () => {
 		{ type: 'zenodo_cleanup_orphan_draft', depositionId: 'orphan-42' }
 	]);
   });
+
+  it('does not let file-correction approval rules block orphan cleanup', () => {
+    const plan = planPublicationSync({
+      record: publicationRecord(), files: fileManifest([file({ sha256: SHA_B })]),
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: zenodoReuseCrossrefTarget(),
+      state: {
+        zenodo: {
+          environment: 'sandbox', identifierPolicy: 'reuse-crossref',
+          lastSuccess: { payloadHash: 'old-payload', fileManifestHash: 'old-files' },
+          identifiers: { latestRecordId: '42', parentId: '41' },
+          orphanDraftCleanup: { depositionId: 'orphan-42' }
+        }
+      }
+    });
+
+    expect('operations' in plan ? plan.operations : []).toEqual([
+      { type: 'zenodo_cleanup_orphan_draft', depositionId: 'orphan-42' }
+    ]);
+  });
 });
 
 function publicationRecord(overrides: Record<string, unknown> = {}) {
@@ -497,5 +740,16 @@ function zenodoMintTarget() {
   return {
     crossref: { enabled: false as const },
     zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+  };
+}
+
+function zenodoReuseCrossrefTarget() {
+  return {
+    crossref: { enabled: false as const },
+    zenodo: {
+      enabled: true as const,
+      environment: 'sandbox' as const,
+      identifierPolicy: 'reuse-crossref' as const
+    }
   };
 }

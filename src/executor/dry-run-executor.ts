@@ -37,6 +37,11 @@ export type DryRunAction =
       readonly depositionId: string;
     }
   | {
+      readonly kind: 'would_discard_expired_zenodo_file_correction';
+      readonly depositionId: string;
+      readonly draftRecordId: string;
+    }
+  | {
       readonly kind: 'would_publish_journaled_zenodo_draft';
       readonly depositionId: string;
       readonly draftRecordId: string;
@@ -122,6 +127,12 @@ function describeOperation(operation: PublicationSyncOperation): DryRunAction {
       return {
         kind: 'would_delete_orphaned_zenodo_draft',
         depositionId: operation.depositionId
+      };
+    case 'zenodo_discard_expired_file_correction':
+      return {
+        kind: 'would_discard_expired_zenodo_file_correction',
+        depositionId: operation.depositionId,
+        draftRecordId: operation.draftRecordId
       };
     case 'zenodo_publish_journaled_draft':
       return {

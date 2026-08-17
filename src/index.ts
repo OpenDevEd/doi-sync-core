@@ -70,6 +70,14 @@ export {
 } from './publication/files.js';
 export type { PublicationFile, PublicationFileManifest } from './publication/files.js';
 export {
+	zenodoFileCorrectionApprovalSchema,
+	zenodoFileCorrectionPublishDeadline,
+	zenodoFileCorrectionStartDeadline,
+	ZENODO_FILE_CORRECTION_COMPLETE_WINDOW_MS,
+	ZENODO_FILE_CORRECTION_START_WINDOW_MS
+} from './publication/file-corrections.js';
+export type { ZenodoFileCorrectionApproval } from './publication/file-corrections.js';
+export {
 	parsePublicationIdentifiers,
 	parsePublicationRecordSnapshot
 } from './publication/record.js';

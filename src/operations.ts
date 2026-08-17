@@ -11,6 +11,7 @@ export type ZenodoSyncOperation = Extract<PublicationSyncOperation, {
     | 'zenodo_file_update'
     | 'zenodo_new_version'
     | 'zenodo_discard_preparing_draft'
+    | 'zenodo_discard_expired_file_correction'
     | 'zenodo_cleanup_orphan_draft'
     | 'zenodo_publish_journaled_draft';
 }>;
@@ -41,6 +42,7 @@ export function isZenodoOperation(
     || operation.type === 'zenodo_file_update'
     || operation.type === 'zenodo_new_version'
     || operation.type === 'zenodo_discard_preparing_draft'
+    || operation.type === 'zenodo_discard_expired_file_correction'
     || operation.type === 'zenodo_cleanup_orphan_draft'
     || operation.type === 'zenodo_publish_journaled_draft';
 }

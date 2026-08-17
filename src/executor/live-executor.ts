@@ -55,6 +55,7 @@ type ZenodoPreparationOperation = Exclude<ZenodoSyncOperation, {
 	readonly type:
 		| 'zenodo_publish_journaled_draft'
 		| 'zenodo_discard_preparing_draft'
+		| 'zenodo_discard_expired_file_correction'
 		| 'zenodo_cleanup_orphan_draft';
 }>;
 
@@ -349,7 +350,10 @@ async function executeZenodoOperation(
 		}
 	}
 	if (operation.type === 'zenodo_discard_preparing_draft') {
-		return discardPreparingZenodoDraft(input, plan, operation);
+		return discardZenodoDraft(input, plan, operation);
+	}
+	if (operation.type === 'zenodo_discard_expired_file_correction') {
+		return discardZenodoDraft(input, plan, operation);
 	}
 	if (operation.type === 'zenodo_publish_journaled_draft') {
 		return publishJournaledDraft(input, plan, operation);
@@ -394,25 +398,30 @@ async function executeZenodoOperation(
 	return unreachable(operation);
 }
 
-async function discardPreparingZenodoDraft(
+async function discardZenodoDraft(
 	input: ExecuteLivePublicationSyncPlanInput,
 	plan: WriteRequiredPublicationSyncPlan,
-	operation: Extract<ZenodoSyncOperation, { readonly type: 'zenodo_discard_preparing_draft' }>
+	operation: Extract<ZenodoSyncOperation, {
+		readonly type: 'zenodo_discard_preparing_draft' | 'zenodo_discard_expired_file_correction'
+	}>
 ): Promise<PublicationSyncOperationResult> {
 	if (!input.zenodoJournal) {
 		return failed(operation.type, 'ZENODO_JOURNAL_REQUIRED', 'Cannot recover a Zenodo draft without journal storage');
 	}
+	const originalOperationType = operation.type === 'zenodo_discard_expired_file_correction'
+		? 'zenodo_file_update'
+		: operation.originalOperationType;
 	const draft: ZenodoPreparedDraft = {
 		depositionId: operation.depositionId,
 		draftRecordId: operation.draftRecordId,
-		...(operation.originalOperationType === 'zenodo_file_update'
+		...(originalOperationType === 'zenodo_file_update'
 			? { api: 'invenio_record' as const }
 			: {})
 	};
 	try {
 		await requireZenodoProvider(input).discardPreparedDraft({
 			token: requireZenodoToken(input),
-			operationType: operation.originalOperationType,
+			operationType: originalOperationType,
 			draft
 		});
 		await input.zenodoJournal.clearZenodoPublishDraft({
@@ -421,7 +430,21 @@ async function discardPreparingZenodoDraft(
 			depositionId: operation.depositionId,
 			observedAt: input.now?.() ?? new Date()
 		});
-		return { type: operation.type, status: 'succeeded' };
+		if (operation.type !== 'zenodo_discard_expired_file_correction') {
+			return { type: operation.type, status: 'succeeded' };
+		}
+		const failureClass = operation.reason === 'deadline_expired'
+			? 'ZENODO_FILE_CORRECTION_WINDOW_CLOSED'
+			: operation.reason === 'deadline_missing'
+				? 'ZENODO_FIRST_PUBLICATION_TIME_REQUIRED'
+				: 'ZENODO_FILE_CORRECTION_APPROVAL_REQUIRED';
+		return failed(
+			operation.type,
+			failureClass,
+			operation.reason === 'deadline_expired'
+				? 'The Zenodo file correction was not published before its 45-day deadline'
+				: 'The unsafe Zenodo file correction draft was discarded'
+		);
 	} catch (error) {
 		return failedFromError(operation.type, error);
 	}
@@ -472,12 +495,17 @@ async function executeJournaledZenodoOperation(
 		operationType: operation.type,
 		zenodoPayloadHash: operation.payloadHash,
 		...operationFileManifestHash(operation),
+		...operationFileCorrectionApproval(operation),
 		depositionId: draft.depositionId,
 		draftRecordId: draft.draftRecordId,
 		...(draft.parentId ? { parentId: draft.parentId } : {}),
 		status: 'ready_to_publish',
 		observedAt
 	});
+	const publishAt = input.now?.() ?? new Date();
+	if (fileCorrectionDeadlinePassed(operation, publishAt)) {
+		return discardExpiredFileCorrection(input, plan, operation.type, draft, publishAt);
+	}
 
 	let identifiers: ZenodoRecordIdentifiers;
 	try {
@@ -490,16 +518,17 @@ async function executeJournaledZenodoOperation(
 		if (!recovered) return failedFromError(operation.type, error);
 		if (!recovered.identifiers) return recovered.result;
 		const orphanDraftCleanup = orphanCreateDraftCleanup(operation.type, draft, recovered.identifiers);
-		await markDraftPublished(input, plan, draft, recovered.identifiers, observedAt, orphanDraftCleanup);
+		await markDraftPublished(input, plan, draft, recovered.identifiers, publishAt, orphanDraftCleanup);
 		const cleanup = await cleanupOrphanCreateDraft(input, plan, orphanDraftCleanup);
 		return withCleanup(recovered.result, cleanup);
 	}
 
-	await markDraftPublished(input, plan, draft, identifiers, observedAt);
+	await markDraftPublished(input, plan, draft, identifiers, publishAt);
 	return {
 		type: operation.type,
 		status: 'succeeded',
 		...(draft.payloadSnapshot ? { zenodoPayloadSnapshot: draft.payloadSnapshot } : {}),
+		zenodoPublishedAt: identifiers.publishedAt,
 		zenodo: toSettlementIdentifiers(identifiers)
 	};
 }
@@ -519,6 +548,9 @@ async function publishJournaledDraft(
 		...(operation.originalOperationType === 'zenodo_file_update' ? { api: 'invenio_record' as const } : {})
 	};
 	const observedAt = input.now?.() ?? new Date();
+	if (fileCorrectionDeadlinePassed(operation, observedAt)) {
+		return discardExpiredFileCorrection(input, plan, operation.type, draft, observedAt);
+	}
 	try {
 		const identifiers = await requireZenodoProvider(input).publishDraft({
 			token: requireZenodoToken(input),
@@ -528,6 +560,7 @@ async function publishJournaledDraft(
 		return {
 			type: operation.type,
 			status: 'succeeded',
+			zenodoPublishedAt: identifiers.publishedAt,
 			zenodo: toSettlementIdentifiers(identifiers)
 		};
 	} catch (error) {
@@ -556,6 +589,7 @@ function journalPreparingDraft(
 			operationType: operation.type,
 			zenodoPayloadHash: operation.payloadHash,
 			...operationFileManifestHash(operation),
+			...operationFileCorrectionApproval(operation),
 			depositionId: draft.depositionId,
 			draftRecordId: draft.draftRecordId,
 			...(draft.parentId ? { parentId: draft.parentId } : {}),
@@ -657,6 +691,55 @@ function operationFileManifestHash(
 		: {};
 }
 
+function operationFileCorrectionApproval(
+	operation: ZenodoPreparationOperation
+) {
+	return operation.type === 'zenodo_file_update'
+		? { fileCorrectionApproval: operation.approval }
+		: {};
+}
+
+function fileCorrectionDeadlinePassed(
+	operation:
+		| ZenodoPreparationOperation
+		| Extract<ZenodoSyncOperation, { readonly type: 'zenodo_publish_journaled_draft' }>,
+	observedAt: Date
+): boolean {
+	if (operation.type === 'zenodo_file_update') return observedAt > operation.publishBy;
+	if (operation.type !== 'zenodo_publish_journaled_draft') return false;
+	return operation.originalOperationType === 'zenodo_file_update'
+		&& (operation.publishBy === undefined || observedAt > operation.publishBy);
+}
+
+async function discardExpiredFileCorrection(
+	input: ExecuteLivePublicationSyncPlanInput,
+	plan: WriteRequiredPublicationSyncPlan,
+	resultType: PublicationSyncOperation['type'],
+	draft: ZenodoPreparedDraft,
+	observedAt: Date
+): Promise<PublicationSyncOperationResult> {
+	try {
+		await requireZenodoProvider(input).discardPreparedDraft({
+			token: requireZenodoToken(input),
+			operationType: 'zenodo_file_update',
+			draft
+		});
+		await input.zenodoJournal?.clearZenodoPublishDraft({
+			recordId: plan.record.recordKey,
+			environment: requireZenodoTarget(plan).environment,
+			depositionId: draft.depositionId,
+			observedAt
+		});
+		return failed(
+			resultType,
+			'ZENODO_FILE_CORRECTION_WINDOW_CLOSED',
+			'The Zenodo file correction was not published before its 45-day deadline'
+		);
+	} catch (error) {
+		return failedFromError(resultType, error);
+	}
+}
+
 interface ZenodoDoiConflictRecovery {
 	readonly result: PublicationSyncOperationResult;
 	readonly identifiers?: ZenodoRecordIdentifiers;
@@ -687,6 +770,7 @@ async function recoverZenodoDoiConflict(
 				type: operationType,
 				status: 'succeeded',
 				zenodoAdoptionOnly: true,
+				zenodoPublishedAt: lookup.record.identifiers.publishedAt,
 				zenodo: toSettlementIdentifiers(lookup.record.identifiers)
 			}
 		};

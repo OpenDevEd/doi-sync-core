@@ -4,6 +4,10 @@ import type { CrossrefEnvironment } from '../crossref/deposit.js';
 import { jsonValueSchema } from '../json.js';
 import type { ZenodoProviderEnvironment, ZenodoPublishJournalOperationType } from '../zenodo/journal.js';
 import type { ZenodoIdentifierPolicy } from './targets.js';
+import {
+  zenodoFileCorrectionApprovalSchema,
+  type ZenodoFileCorrectionApproval
+} from './file-corrections.js';
 
 export interface CrossrefProviderSyncState {
   readonly environment: CrossrefEnvironment;
@@ -32,6 +36,8 @@ export interface ZenodoProviderIdentifiers {
 export interface ZenodoProviderSyncState {
   readonly environment: ZenodoProviderEnvironment;
   readonly identifierPolicy: ZenodoIdentifierPolicy;
+  readonly firstPublishedAt?: Date;
+  readonly consumedFileCorrectionApprovalIds?: readonly string[];
   readonly lastSuccess?: {
     readonly payloadHash: string;
     readonly payloadSnapshot?: JsonValue;
@@ -50,6 +56,7 @@ export interface ZenodoProviderSyncState {
     readonly payloadHash: string;
     readonly fileManifestHash?: string;
     readonly status: 'preparing' | 'ready_to_publish';
+    readonly fileCorrectionApproval?: ZenodoFileCorrectionApproval;
   };
 }
 
@@ -86,6 +93,11 @@ const crossrefProviderSyncStateSchema = z.object({
 const zenodoProviderSyncStateSchema = z.object({
   environment: z.enum(['production', 'sandbox']),
   identifierPolicy: z.enum(['reuse-crossref', 'mint-zenodo']),
+  firstPublishedAt: z.coerce.date().optional(),
+  consumedFileCorrectionApprovalIds: z.array(z.string().min(1)).refine(
+    (ids) => new Set(ids).size === ids.length,
+    'Consumed Zenodo file correction approval IDs must be unique'
+  ).optional(),
   lastSuccess: z.object({
     payloadHash: z.string().min(1),
     payloadSnapshot: jsonValueSchema.optional(),
@@ -113,8 +125,17 @@ const zenodoProviderSyncStateSchema = z.object({
     parentId: z.string().min(1).optional(),
     payloadHash: z.string().min(1),
     fileManifestHash: z.string().min(1).optional(),
-    status: z.enum(['preparing', 'ready_to_publish'])
-  }).strict().optional()
+    status: z.enum(['preparing', 'ready_to_publish']),
+    fileCorrectionApproval: zenodoFileCorrectionApprovalSchema.optional()
+  }).strict().superRefine((journal, context) => {
+    const hasApproval = Boolean(journal.fileCorrectionApproval);
+    if (journal.operationType === 'zenodo_file_update' && !hasApproval) {
+      context.addIssue({ code: 'custom', path: ['fileCorrectionApproval'], message: 'Zenodo file correction journal requires approval' });
+    }
+    if (journal.operationType !== 'zenodo_file_update' && hasApproval) {
+      context.addIssue({ code: 'custom', path: ['fileCorrectionApproval'], message: 'Only Zenodo file corrections may store approval' });
+    }
+  }).optional()
 }).strict();
 
 const providerSyncStateSchema = z.object({

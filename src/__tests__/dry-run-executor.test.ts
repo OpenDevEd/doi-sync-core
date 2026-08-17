@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { describeDryRun } from '../executor/dry-run-executor.js';
-import { planPublicationSync } from '../planner.js';
+import { planPublicationSync } from './plan-fixture.js';
 
 describe('publication dry-run description', () => {
 	it('projects the exact provider-neutral operations without writes', () => {

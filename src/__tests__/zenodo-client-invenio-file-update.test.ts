@@ -70,6 +70,7 @@ describe('ZenodoApiClient published external DOI file modification', () => {
       if (method === 'POST' && path === '/api/records/508524/draft/actions/publish') {
         return jsonResponse(202, {
           id: '508524',
+          created: '2026-04-20T09:30:00.000Z',
           parent: { id: '508523' },
           pids: {
             doi: {
@@ -192,6 +193,7 @@ describe('ZenodoApiClient published external DOI file modification', () => {
       if (method === 'POST' && path === '/api/records/508524/draft/actions/publish') {
         return jsonResponse(202, {
           id: '508524',
+          created: '2026-04-20T09:30:00.000Z',
           parent: { id: '508523' },
           pids: {
             doi: {

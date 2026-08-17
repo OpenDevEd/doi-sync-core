@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { planPublicationSync } from '../planner.js';
+import { planPublicationSync } from './plan-fixture.js';
+import { buildPublicationFileManifestHash } from '../publication/files.js';
 import { settleProviderSyncFailure, settlePublicationSyncState } from '../settlement.js';
 
 const observedAt = new Date('2026-05-20T00:00:00.000Z');
@@ -99,16 +100,19 @@ describe('provider-neutral settlement', () => {
 
 	it('stores Zenodo hashes, exact snapshots, and identifiers after success', () => {
 		const plan = publicationPlan();
+		const providerPublishedAt = new Date('2026-04-20T09:30:00.000Z');
 		const settlement = settlePublicationSyncState({
 			plan,
 			observedAt,
 			operationResults: [{
 				type: 'zenodo_create', status: 'succeeded',
+				zenodoPublishedAt: providerPublishedAt,
 				zenodo: { latestRecordId: '42', parentId: '41', versionDoi: '10.5281/zenodo.42' }
 			}]
 		});
 
 		expect(settlement.statePatch.zenodo).toMatchObject({
+			firstPublishedAt: providerPublishedAt,
 			lastSuccess: {
 				payloadHash: plan.status === 'write_required' ? plan.hashes.zenodoPayloadHash : undefined,
 				fileManifestHash: plan.status === 'write_required' ? plan.hashes.fileManifestHash : undefined
@@ -198,6 +202,7 @@ describe('provider-neutral settlement', () => {
 			zenodo: {
 				environment: 'sandbox' as const,
 				identifierPolicy: 'reuse-crossref' as const,
+				firstPublishedAt: new Date('2026-04-20T00:00:00.000Z'),
 				lastSuccess: {
 					payloadHash: baseline.hashes.zenodoPayloadHash,
 					payloadSnapshot: baselinePayloadSnapshot,
@@ -216,7 +221,13 @@ describe('provider-neutral settlement', () => {
 			files: { files: [nextFile] },
 			identifiers: baseline.identifiers,
 			targets: baseline.targets,
-			state: previousState
+			state: previousState,
+			zenodoFileChangeApproval: {
+				id: 'approval-1', kind: 'minor_correction', recordKey: baseline.record.recordKey,
+				doi: '10.53832/opendeved.1205',
+				fileManifestHash: buildPublicationFileManifestHash({ files: [nextFile] }),
+				approvedAt: observedAt
+			}
 		});
 		if (plan.status !== 'write_required') throw new Error('expected update plan');
 
@@ -234,6 +245,9 @@ describe('provider-neutral settlement', () => {
 			payloadHash: baseline.hashes.zenodoPayloadHash,
 			fileManifestHash: plan.hashes.fileManifestHash
 		});
+		expect(settlement.statePatch.zenodo?.consumedFileCorrectionApprovalIds).toEqual([
+			'approval-1'
+		]);
 	});
 
 	it('preserves the previous failure when a write-required run is incomplete', () => {

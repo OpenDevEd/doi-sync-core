@@ -271,6 +271,7 @@ function valueToString(value: FormDataEntryValue | null): string | null {
 
 function currentZenodoRecordResponse(recordId: string, parentId: string): {
   readonly id: string;
+  readonly created: string;
   readonly parent: {
     readonly id: string;
     readonly pids: {
@@ -286,6 +287,7 @@ function currentZenodoRecordResponse(recordId: string, parentId: string): {
 } {
   return {
     id: recordId,
+    created: '2026-04-20T09:30:00.000Z',
     parent: {
       id: parentId,
       pids: {

@@ -28,6 +28,7 @@ export type PublicationSyncOperationResult =
 		readonly type: PublicationSyncOperation['type'];
 		readonly status: 'succeeded';
 		readonly zenodo?: ZenodoSettlementIdentifiers;
+		readonly zenodoPublishedAt?: Date;
 		readonly zenodoAdoptionOnly?: boolean;
 		readonly zenodoOrphanDraftCleanup?: ZenodoOrphanDraftCleanup;
 		readonly zenodoPayloadSnapshot?: JsonValue;
@@ -60,6 +61,8 @@ export interface ProviderSyncStatePatch {
 	readonly zenodo?: {
 		readonly environment: NonNullable<ProviderSyncState['zenodo']>['environment'];
 		readonly identifierPolicy: NonNullable<ProviderSyncState['zenodo']>['identifierPolicy'];
+		readonly firstPublishedAt?: Date;
+		readonly consumedFileCorrectionApprovalIds?: readonly string[];
 		readonly lastSuccess?: NonNullable<ProviderSyncState['zenodo']>['lastSuccess'];
 		readonly identifiers?: ZenodoProviderIdentifiers;
 		readonly orphanDraftCleanup?: NonNullable<ProviderSyncState['zenodo']>['orphanDraftCleanup'] | null;
@@ -216,6 +219,8 @@ function settleZenodo(
 ): ProviderSyncStatePatch['zenodo'] | undefined {
 	let lastSuccess: NonNullable<ProviderSyncState['zenodo']>['lastSuccess'] | undefined;
 	let identifiers: ZenodoProviderIdentifiers | undefined;
+	let firstPublishedAt: Date | undefined;
+	let consumedFileCorrectionApprovalIds: readonly string[] | undefined;
 	let orphanDraftCleanup: NonNullable<ProviderSyncState['zenodo']>['orphanDraftCleanup'] | null | undefined;
 	for (const operation of input.plan.operations) {
 		if (!isZenodoOperation(operation)) continue;
@@ -224,10 +229,16 @@ function settleZenodo(
 			if (result?.status === 'succeeded') orphanDraftCleanup = null;
 			continue;
 		}
-		if (operation.type === 'zenodo_discard_preparing_draft') continue;
+		if (
+			operation.type === 'zenodo_discard_preparing_draft'
+			|| operation.type === 'zenodo_discard_expired_file_correction'
+		) continue;
 		const result = resultFor(results, operation.type);
 		if (result?.status !== 'succeeded') continue;
 		if (result.zenodo) identifiers = result.zenodo;
+		if (!input.previousState?.zenodo?.firstPublishedAt && result.zenodoPublishedAt) {
+			firstPublishedAt = result.zenodoPublishedAt;
+		}
 		if (result.zenodoOrphanDraftCleanup?.status === 'failed') {
 			orphanDraftCleanup = { depositionId: result.zenodoOrphanDraftCleanup.depositionId };
 		}
@@ -241,6 +252,20 @@ function settleZenodo(
 		const fileManifestHash = writesFiles && 'fileManifestHash' in operation
 			? operation.fileManifestHash
 			: previous?.fileManifestHash;
+		const fileCorrectionApprovalId = operation.type === 'zenodo_file_update'
+			? operation.approval.id
+			: operation.type === 'zenodo_publish_journaled_draft'
+				&& operation.originalOperationType === 'zenodo_file_update'
+				? operation.fileCorrectionApproval?.id
+				: undefined;
+		if (fileCorrectionApprovalId) {
+			consumedFileCorrectionApprovalIds = [
+				...new Set([
+					...(input.previousState?.zenodo?.consumedFileCorrectionApprovalIds ?? []),
+					fileCorrectionApprovalId
+				])
+			];
+		}
 		const payloadSnapshot = writesMetadata
 			? result.zenodoPayloadSnapshot ?? (
 				operation.payloadHash === input.plan.hashes.zenodoPayloadHash
@@ -259,11 +284,26 @@ function settleZenodo(
 					: {})
 		};
 	}
-	if (!lastSuccess && !identifiers && orphanDraftCleanup === undefined) return undefined;
+	if (
+		!lastSuccess
+		&& !identifiers
+		&& !firstPublishedAt
+		&& !consumedFileCorrectionApprovalIds
+		&& orphanDraftCleanup === undefined
+	) {
+		return undefined;
+	}
 	if (!input.plan.targets.zenodo.enabled) return undefined;
+	const effectiveFirstPublishedAt = firstPublishedAt ?? input.previousState?.zenodo?.firstPublishedAt;
+	const effectiveConsumedApprovalIds = consumedFileCorrectionApprovalIds
+		?? input.previousState?.zenodo?.consumedFileCorrectionApprovalIds;
 	return {
 		environment: input.plan.targets.zenodo.environment,
 		identifierPolicy: input.plan.targets.zenodo.identifierPolicy,
+		...(effectiveFirstPublishedAt ? { firstPublishedAt: effectiveFirstPublishedAt } : {}),
+		...(effectiveConsumedApprovalIds
+			? { consumedFileCorrectionApprovalIds: effectiveConsumedApprovalIds }
+			: {}),
 		...(lastSuccess ? { lastSuccess } : {}),
 		...(identifiers ? { identifiers } : {}),
 		...(orphanDraftCleanup === undefined ? {} : { orphanDraftCleanup })

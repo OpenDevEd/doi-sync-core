@@ -7,12 +7,13 @@ import {
 	type ZenodoPublishJournalWriter,
 	type ZenodoWriter
 } from '../executor/live-executor.js';
-import { planPublicationSync } from '../planner.js';
+import { planPublicationSync } from './plan-fixture.js';
 import type { PublicationFile } from '../publication/files.js';
 import type { PublicationTargetPolicy } from '../publication/targets.js';
 import { ProviderHttpError } from '../resilience/errors.js';
 
 const bytes = new Uint8Array([1, 2, 3]);
+const zenodoPublishedAt = new Date('2026-04-20T00:00:00.000Z');
 const file: PublicationFile = {
 	fileKey: 'FILE1234', publicationRevision: 1, filename: 'report.pdf',
 	contentType: 'application/pdf', size: 3,
@@ -31,6 +32,47 @@ function plan(targets: PublicationTargetPolicy) {
 		identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
 		targets
 	});
+}
+
+function fileCorrectionPlan() {
+	const targets = {
+		crossref: { enabled: false as const },
+		zenodo: {
+			enabled: true as const,
+			environment: 'sandbox' as const,
+			identifierPolicy: 'reuse-crossref' as const
+		}
+	};
+	const current = plan(targets);
+	if (current.status !== 'write_required' || !current.hashes.zenodoPayloadHash) {
+		throw new Error('expected Zenodo baseline');
+	}
+	const approval = {
+		id: 'approval-1', kind: 'minor_correction' as const,
+		recordKey: current.record.recordKey, doi: '10.53832/opendeved.1205',
+		fileManifestHash: current.hashes.fileManifestHash,
+		approvedAt: new Date('2026-05-20T00:00:00.000Z')
+	};
+	const correction = planPublicationSync({
+		observedAt: new Date('2026-05-20T00:00:00.000Z'),
+		record: current.record, files: current.files,
+		identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+		targets,
+		state: {
+			zenodo: {
+				environment: 'sandbox', identifierPolicy: 'reuse-crossref',
+				firstPublishedAt: new Date('2026-04-20T00:00:00.000Z'),
+				lastSuccess: {
+					payloadHash: current.hashes.zenodoPayloadHash,
+					fileManifestHash: 'previous-files'
+				},
+				identifiers: { latestRecordId: '42', parentId: '41' }
+			}
+		},
+		zenodoFileChangeApproval: approval
+	});
+	if (correction.status !== 'write_required') throw new Error('expected file correction plan');
+	return { correction, approval };
 }
 
 function crossref(overrides: Partial<CrossrefDepositor> = {}): CrossrefDepositor {
@@ -62,7 +104,9 @@ function zenodo(overrides: Partial<ZenodoWriter> = {}): ZenodoWriter {
 		prepareUpdateRecordMetadata: vi.fn(() => Promise.resolve(draft)),
 		prepareUpdateRecordFiles: vi.fn(() => Promise.resolve(draft)),
 		prepareNewVersion: vi.fn(() => Promise.resolve(draft)),
-		publishDraft: vi.fn(() => Promise.resolve({ latestRecordId: '42', parentId: '41', links: {} })),
+		publishDraft: vi.fn(() => Promise.resolve({
+			latestRecordId: '42', parentId: '41', publishedAt: zenodoPublishedAt, links: {}
+		})),
 		...overrides
 	};
 }
@@ -109,6 +153,7 @@ describe('provider-neutral live executor', () => {
 
 		await expect(executeLivePublicationSyncPlan(input)).resolves.toEqual([{
 			type: 'zenodo_create', status: 'succeeded',
+			zenodoPublishedAt,
 			zenodo: { latestRecordId: '42', parentId: '41' }
 		}]);
 		expect(provider.prepareCreateRecord).toHaveBeenCalledWith(expect.objectContaining({
@@ -125,6 +170,48 @@ describe('provider-neutral live executor', () => {
 			status: 'ready_to_publish'
 		}));
 		expect(journal.markZenodoPublishDraftPublished).toHaveBeenCalledOnce();
+	});
+
+	it('journals the exact file-correction approval and refuses to publish after day 45', async () => {
+		const { correction, approval } = fileCorrectionPlan();
+		const journal = zenodoJournal();
+		const draft = { depositionId: '42', draftRecordId: '42', parentId: '41' };
+		const provider = zenodo({
+			prepareUpdateRecordFiles: vi.fn(async (
+				request: Parameters<ZenodoWriter['prepareUpdateRecordFiles']>[0]
+			) => {
+				await request.onPreparedDraft?.(draft);
+				return draft;
+			})
+		});
+		const now = vi.fn()
+			.mockReturnValueOnce(new Date('2026-06-03T00:00:00.000Z'))
+			.mockReturnValueOnce(new Date('2026-06-03T00:00:00.000Z'))
+			.mockReturnValueOnce(new Date('2026-06-04T00:00:00.001Z'));
+
+		await expect(executeLivePublicationSyncPlan({
+			plan: correction,
+			credentials: { zenodoToken: 'sandbox-token' },
+			providers: { zenodo: provider },
+			fileReader: { readFile: () => Promise.resolve(bytes) },
+			zenodoJournal: journal,
+			now
+		})).resolves.toEqual([{
+			type: 'zenodo_file_update', status: 'failed',
+			failureClass: 'ZENODO_FILE_CORRECTION_WINDOW_CLOSED',
+			failureSummary: 'The Zenodo file correction was not published before its 45-day deadline'
+		}]);
+
+		expect(journal.recordZenodoPublishDraft).toHaveBeenCalledTimes(2);
+		expect(journal.recordZenodoPublishDraft).toHaveBeenNthCalledWith(
+			1, expect.objectContaining({ status: 'preparing', fileCorrectionApproval: approval })
+		);
+		expect(journal.recordZenodoPublishDraft).toHaveBeenNthCalledWith(
+			2, expect.objectContaining({ status: 'ready_to_publish', fileCorrectionApproval: approval })
+		);
+		expect(provider.publishDraft).not.toHaveBeenCalled();
+		expect(provider.discardPreparedDraft).toHaveBeenCalledOnce();
+		expect(journal.clearZenodoPublishDraft).toHaveBeenCalledOnce();
 	});
 
 	it('rejects bytes that do not match the canonical manifest before provider preparation', async () => {
@@ -179,7 +266,8 @@ describe('provider-neutral live executor', () => {
 			findRecordByDoi: vi.fn(() => Promise.resolve({
 				status: 'found' as const,
 				record: { kind: 'published_record' as const, identifiers: {
-					latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205', links: {}
+					latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205',
+					publishedAt: zenodoPublishedAt, links: {}
 				} }
 			}))
 		});
@@ -191,6 +279,7 @@ describe('provider-neutral live executor', () => {
 		const results = await executeLivePublicationSyncPlan(input);
 		expect(results).toContainEqual({
 			type: 'zenodo_create', status: 'succeeded', zenodoAdoptionOnly: true,
+			zenodoPublishedAt,
 			zenodo: { latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205' }
 		});
 	});
@@ -218,7 +307,8 @@ describe('provider-neutral live executor', () => {
 			findRecordByDoi: vi.fn(() => Promise.resolve({
 				status: 'found' as const,
 				record: { kind: 'published_record' as const, identifiers: {
-					latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205', links: {}
+					latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205',
+					publishedAt: zenodoPublishedAt, links: {}
 				} }
 			}))
 		});
@@ -239,6 +329,7 @@ describe('provider-neutral live executor', () => {
 
 		expect(results).toContainEqual({
 			type: 'zenodo_create', status: 'succeeded', zenodoAdoptionOnly: true,
+			zenodoPublishedAt,
 			zenodo: { latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205' },
 			zenodoOrphanDraftCleanup: { status: 'deleted', depositionId: '42' }
 		});
@@ -259,7 +350,8 @@ describe('provider-neutral live executor', () => {
 			findRecordByDoi: vi.fn(() => Promise.resolve({
 				status: 'found' as const,
 				record: { kind: 'published_record' as const, identifiers: {
-					latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205', links: {}
+					latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205',
+					publishedAt: zenodoPublishedAt, links: {}
 				} }
 			})),
 			deleteUnpublishedDraft: vi.fn(() => Promise.reject(new Error('cleanup unavailable')))
@@ -537,7 +629,8 @@ describe('provider-neutral live executor', () => {
 		};
 
 		await expect(executeLivePublicationSyncPlan(input)).resolves.toEqual([{
-			type: 'zenodo_create', status: 'succeeded', zenodo: { latestRecordId: '42', parentId: '41' }
+			type: 'zenodo_create', status: 'succeeded', zenodoPublishedAt,
+			zenodo: { latestRecordId: '42', parentId: '41' }
 		}]);
 	});
 

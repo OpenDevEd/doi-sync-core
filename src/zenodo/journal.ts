@@ -1,4 +1,5 @@
 import type { JsonValue } from '../hash.js';
+import type { ZenodoFileCorrectionApproval } from '../publication/file-corrections.js';
 import type { ZenodoRecordIdentifiers } from './records.js';
 
 export type ZenodoProviderEnvironment = 'production' | 'sandbox';
@@ -25,6 +26,7 @@ export interface RecordZenodoPublishDraftInput {
   readonly operationType: ZenodoPublishJournalOperationType;
   readonly zenodoPayloadHash: string;
   readonly fileManifestHash?: string;
+  readonly fileCorrectionApproval?: ZenodoFileCorrectionApproval;
   readonly depositionId: string;
   readonly draftRecordId: string;
   readonly parentId?: string;

@@ -4,6 +4,9 @@ import { buildZenodoWritePayload, ZENODO_INVENIORDM_ACCEPT } from '../zenodo/rec
 import type { ProviderName } from '../resilience/errors.js';
 import { ResilientProviderOperationRunner, type ProviderOperationRunner } from '../resilience/provider-runner.js';
 
+const publishedAtIso = '2026-04-20T09:30:00.000Z';
+const publishedAt = new Date(publishedAtIso);
+
 function response(body: unknown): ZenodoResponseLike {
   return {
     ok: true,
@@ -77,6 +80,7 @@ function createSuccessfulCreateRecordFetch(): ZenodoFetchLike {
     if (url.endsWith('/api/records/502440')) {
       return Promise.resolve(response({
         id: '502440',
+        created: publishedAtIso,
         parent: {
           id: '502439',
           pids: {
@@ -128,6 +132,7 @@ describe('ZenodoApiClient', () => {
       calls.push({ url, init });
       return Promise.resolve(response({
         id: '15043088',
+        created: publishedAtIso,
         parent: {
           id: '15043087',
           pids: {
@@ -152,6 +157,7 @@ describe('ZenodoApiClient', () => {
       identifiers: {
         latestRecordId: '15043088',
         parentId: '15043087',
+        publishedAt,
         conceptDoi: '10.5281/zenodo.15043087',
         versionDoi: '10.5281/zenodo.15043088',
         links: {
@@ -177,6 +183,7 @@ describe('ZenodoApiClient', () => {
       calls.push({ url, init });
       return Promise.resolve(response({
         id: '17585570',
+        created: publishedAtIso,
         parent: {
           id: '17585569',
           pids: {}
@@ -218,6 +225,7 @@ describe('ZenodoApiClient', () => {
     })).resolves.toEqual({
       identifiers: {
         latestRecordId: '17585570',
+        publishedAt,
         parentId: '17585569',
         versionDoi: '10.53832/edtechhub.1152',
         links: {}
@@ -260,6 +268,7 @@ describe('ZenodoApiClient', () => {
         hits: {
           hits: [{
             id: '505547',
+            created: publishedAtIso,
             parent: { id: '505546' },
             pids: { doi: { identifier: '10.53832/opendeved.1205' } },
             links: {
@@ -284,6 +293,7 @@ describe('ZenodoApiClient', () => {
         identifiers: {
           latestRecordId: '505547',
           parentId: '505546',
+          publishedAt,
           versionDoi: '10.53832/opendeved.1205',
           links: {
             selfHtml: 'https://sandbox.zenodo.org/records/505547'
@@ -450,6 +460,7 @@ describe('ZenodoApiClient', () => {
       calls.push({ url, init });
       return Promise.resolve(response({
         id: '123',
+        created: publishedAtIso,
         parent: {
           id: '122',
           pids: {
@@ -566,6 +577,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve(response({
           id: '502440',
+          created: publishedAtIso,
           parent: {
             id: '502439',
             pids: {
@@ -899,6 +911,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve(response({
           id: '502440',
+          created: publishedAtIso,
           parent: {
             id: '502439',
             pids: {
@@ -1042,6 +1055,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve(response({
           id: '502440',
+          created: publishedAtIso,
           parent: {
             id: '502439',
             pids: { doi: { identifier: '10.5072/zenodo.502439' } }
@@ -1118,6 +1132,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve(response({
           id: '502440',
+          created: publishedAtIso,
           parent: {
             id: '502439',
             pids: { doi: { identifier: '10.5072/zenodo.502439' } }
@@ -1371,6 +1386,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve(response({
           id: '502440',
+          created: publishedAtIso,
           parent: { id: '502439', pids: { doi: { identifier: '10.5072/zenodo.502439' } } },
           pids: { doi: { identifier: '10.5072/zenodo.502440' } },
           links: {}
@@ -1449,6 +1465,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502441')) {
         return Promise.resolve(response({
           id: '502441',
+          created: publishedAtIso,
           parent: { id: '502439', pids: { doi: { identifier: '10.5072/zenodo.502439' } } },
           pids: { doi: { identifier: '10.5072/zenodo.502441' } },
           links: {}

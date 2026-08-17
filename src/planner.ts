@@ -12,6 +12,11 @@ import {
   buildPublicationFileManifestHash,
   type PublicationFileManifest
 } from './publication/files.js';
+import {
+  zenodoFileCorrectionPublishDeadline,
+  zenodoFileCorrectionStartDeadline,
+  type ZenodoFileCorrectionApproval
+} from './publication/file-corrections.js';
 import type {
   PublicationIdentifiers,
   PublicationRecordSnapshot
@@ -32,11 +37,13 @@ import {
 export type { ZenodoRecordValidationIssue } from './zenodo/publication-mapper.js';
 
 export interface PlanPublicationSyncInput {
+  readonly observedAt: Date;
   readonly record: PublicationRecordSnapshot;
   readonly files: PublicationFileManifest;
   readonly identifiers: PublicationIdentifiers;
   readonly targets: PublicationTargetPolicy;
   readonly state?: ProviderSyncState;
+  readonly zenodoFileChangeApproval?: ZenodoFileCorrectionApproval;
 }
 
 export type PublicationSyncOperation =
@@ -64,6 +71,8 @@ export type PublicationSyncOperation =
       readonly payloadHash: string;
       readonly fileManifestHash: string;
       readonly removedFileKeys: readonly string[];
+      readonly approval: ZenodoFileCorrectionApproval;
+      readonly publishBy: Date;
     }
   | {
       readonly type: 'zenodo_new_version';
@@ -83,6 +92,13 @@ export type PublicationSyncOperation =
       readonly depositionId: string;
     }
   | {
+      readonly type: 'zenodo_discard_expired_file_correction';
+      readonly originalOperationType: 'zenodo_file_update';
+      readonly depositionId: string;
+      readonly draftRecordId: string;
+      readonly reason: 'deadline_expired' | 'deadline_missing' | 'approval_missing';
+    }
+  | {
       readonly type: 'zenodo_publish_journaled_draft';
       readonly originalOperationType: ZenodoPublishJournalOperationType;
       readonly depositionId: string;
@@ -90,6 +106,8 @@ export type PublicationSyncOperation =
       readonly parentId?: string;
       readonly payloadHash: string;
       readonly fileManifestHash?: string;
+      readonly fileCorrectionApproval?: ZenodoFileCorrectionApproval;
+      readonly publishBy?: Date;
     };
 
 export interface PublicationSyncHashes {
@@ -123,7 +141,10 @@ export type PublicationSyncPlan =
         | 'MISSING_ZENODO_PROVIDER_RECORD_ID'
         | 'CROSSREF_VALIDATION_FAILED'
         | 'ZENODO_VALIDATION_FAILED'
-        | 'ZENODO_IDENTIFIER_POLICY_IMMUTABLE';
+        | 'ZENODO_IDENTIFIER_POLICY_IMMUTABLE'
+        | 'ZENODO_FIRST_PUBLICATION_TIME_REQUIRED'
+        | 'ZENODO_FILE_CORRECTION_APPROVAL_REQUIRED'
+        | 'ZENODO_FILE_CORRECTION_WINDOW_CLOSED';
       readonly issues?: readonly (CrossrefRecordValidationIssue | ZenodoRecordValidationIssue)[];
       readonly operations: readonly [];
     }
@@ -263,9 +284,18 @@ export function planPublicationSync(input: PlanPublicationSyncInput): Publicatio
   const waitingForFile = zenodo.enabled
     && input.files.files.length === 0
     && !hasZenodoRecoveryWork;
-  const zenodoOperations = waitingForFile
-    ? []
-    : planZenodoPublicationOperations(input, hashes, zenodoState);
+  const zenodoPlanning = waitingForFile
+    ? { operations: [] as const }
+    : planZenodoPublicationOperations(input, hashes, zenodoState, managedCrossrefDoi);
+  if ('issue' in zenodoPlanning) {
+    return {
+      status: 'needs_attention',
+      provider: 'zenodo',
+      reason: zenodoPlanning.issue,
+      operations: []
+    };
+  }
+  const zenodoOperations = zenodoPlanning.operations;
   const crossrefOperations = planCrossrefPublicationOperations(
     input,
     hashes,
@@ -357,25 +387,55 @@ function planCrossrefPublicationOperations(
 function planZenodoPublicationOperations(
   input: PlanPublicationSyncInput,
   hashes: PublicationSyncHashes,
-  state: ProviderSyncState['zenodo'] | undefined
-): readonly PublicationSyncOperation[] {
-  if (!input.targets.zenodo.enabled || !hashes.zenodoPayloadHash) return [];
+  state: ProviderSyncState['zenodo'] | undefined,
+  managedCrossrefDoi: string | undefined
+): { readonly operations: readonly PublicationSyncOperation[] } | {
+  readonly issue:
+    | 'ZENODO_FIRST_PUBLICATION_TIME_REQUIRED'
+    | 'ZENODO_FILE_CORRECTION_APPROVAL_REQUIRED'
+    | 'ZENODO_FILE_CORRECTION_WINDOW_CLOSED';
+} {
+  if (!input.targets.zenodo.enabled || !hashes.zenodoPayloadHash) return { operations: [] };
   if (state?.orphanDraftCleanup) {
-    return [{
+    return { operations: [{
       type: 'zenodo_cleanup_orphan_draft',
       depositionId: state.orphanDraftCleanup.depositionId
-    }];
+    }] };
   }
   if (state?.journal?.status === 'preparing') {
-    return [{
+    return { operations: [{
       type: 'zenodo_discard_preparing_draft',
       originalOperationType: state.journal.operationType,
       depositionId: state.journal.depositionId,
       draftRecordId: state.journal.draftRecordId
-    }];
+    }] };
   }
   if (state?.journal) {
-    return [{
+    if (state.journal.operationType === 'zenodo_file_update') {
+      const reason = !state.firstPublishedAt
+        ? 'deadline_missing' as const
+        : !isValidZenodoFileCorrectionApproval({
+            approval: state.journal.fileCorrectionApproval,
+            recordKey: input.record.recordKey,
+            managedCrossrefDoi,
+            fileManifestHash: state.journal.fileManifestHash,
+            firstPublishedAt: state.firstPublishedAt,
+            observedAt: input.observedAt,
+            consumedApprovalIds: state.consumedFileCorrectionApprovalIds ?? []
+          })
+          ? 'approval_missing' as const
+          : input.observedAt > zenodoFileCorrectionPublishDeadline(state.firstPublishedAt)
+            ? 'deadline_expired' as const
+            : undefined;
+      if (reason) return { operations: [{
+        type: 'zenodo_discard_expired_file_correction',
+        originalOperationType: 'zenodo_file_update',
+        depositionId: state.journal.depositionId,
+        draftRecordId: state.journal.draftRecordId,
+        reason
+      }] };
+    }
+    return { operations: [{
       type: 'zenodo_publish_journaled_draft',
       originalOperationType: state.journal.operationType,
       depositionId: state.journal.depositionId,
@@ -384,53 +444,105 @@ function planZenodoPublicationOperations(
       payloadHash: state.journal.payloadHash,
       ...(state.journal.fileManifestHash
         ? { fileManifestHash: state.journal.fileManifestHash }
+        : {}),
+      ...(state.journal.fileCorrectionApproval
+        ? { fileCorrectionApproval: state.journal.fileCorrectionApproval }
+        : {}),
+      ...(state.journal.operationType === 'zenodo_file_update' && state.firstPublishedAt
+        ? { publishBy: zenodoFileCorrectionPublishDeadline(state.firstPublishedAt) }
         : {})
-    }];
+    }] };
   }
   if (!state?.identifiers?.latestRecordId) {
-    return [{
+    return { operations: [{
       type: 'zenodo_create',
       payloadHash: hashes.zenodoPayloadHash,
       fileManifestHash: hashes.fileManifestHash
-    }];
+    }] };
   }
 
   const metadataChanged = state.lastSuccess?.payloadHash !== hashes.zenodoPayloadHash;
   const filesChanged = state.lastSuccess?.fileManifestHash !== hashes.fileManifestHash;
-  if (!metadataChanged && !filesChanged) return [];
+  if (!metadataChanged && !filesChanged) return { operations: [] };
   const removedFileKeys = removedPublicationFileKeys(
     state.lastSuccess?.fileManifestSnapshot,
     input.files
   );
 
   if (filesChanged && input.targets.zenodo.identifierPolicy === 'mint-zenodo') {
-    return [{
+    return { operations: [{
       type: 'zenodo_new_version',
       latestRecordId: state.identifiers.latestRecordId,
       payloadHash: hashes.zenodoPayloadHash,
       fileManifestHash: hashes.fileManifestHash,
       removedFileKeys
-    }];
+    }] };
   }
 
-  return [
-    ...(metadataChanged
-      ? [{
-          type: 'zenodo_metadata_update' as const,
-          latestRecordId: state.identifiers.latestRecordId,
-          payloadHash: hashes.zenodoPayloadHash
-        }]
-      : []),
-    ...(filesChanged
-      ? [{
-          type: 'zenodo_file_update' as const,
-          latestRecordId: state.identifiers.latestRecordId,
-          payloadHash: hashes.zenodoPayloadHash,
-          fileManifestHash: hashes.fileManifestHash,
-          removedFileKeys
-        }]
-      : [])
-  ];
+  if (filesChanged) {
+    if (!state.firstPublishedAt) return { issue: 'ZENODO_FIRST_PUBLICATION_TIME_REQUIRED' };
+    const approval = input.zenodoFileChangeApproval;
+    const startDeadline = zenodoFileCorrectionStartDeadline(state.firstPublishedAt);
+    const validApproval = isValidZenodoFileCorrectionApproval({
+      approval,
+      recordKey: input.record.recordKey,
+      managedCrossrefDoi,
+      fileManifestHash: hashes.fileManifestHash,
+      firstPublishedAt: state.firstPublishedAt,
+      observedAt: input.observedAt,
+      consumedApprovalIds: state.consumedFileCorrectionApprovalIds ?? []
+    });
+    if (!validApproval && input.observedAt > startDeadline) {
+      return { issue: 'ZENODO_FILE_CORRECTION_WINDOW_CLOSED' };
+    }
+    if (!validApproval) return { issue: 'ZENODO_FILE_CORRECTION_APPROVAL_REQUIRED' };
+    return { operations: [
+      ...(metadataChanged
+        ? [{
+            type: 'zenodo_metadata_update' as const,
+            latestRecordId: state.identifiers.latestRecordId,
+            payloadHash: hashes.zenodoPayloadHash
+          }]
+        : []),
+      {
+        type: 'zenodo_file_update',
+        latestRecordId: state.identifiers.latestRecordId,
+        payloadHash: hashes.zenodoPayloadHash,
+        fileManifestHash: hashes.fileManifestHash,
+        removedFileKeys,
+        approval: approval as ZenodoFileCorrectionApproval,
+        publishBy: zenodoFileCorrectionPublishDeadline(state.firstPublishedAt)
+      }
+    ] };
+  }
+
+  return { operations: metadataChanged ? [{
+    type: 'zenodo_metadata_update',
+    latestRecordId: state.identifiers.latestRecordId,
+    payloadHash: hashes.zenodoPayloadHash
+  }] : [] };
+}
+
+function isValidZenodoFileCorrectionApproval(input: {
+  readonly approval: ZenodoFileCorrectionApproval | undefined;
+  readonly recordKey: string;
+  readonly managedCrossrefDoi: string | undefined;
+  readonly fileManifestHash: string | undefined;
+  readonly firstPublishedAt: Date;
+  readonly observedAt: Date;
+  readonly consumedApprovalIds: readonly string[];
+}): input is typeof input & { readonly approval: ZenodoFileCorrectionApproval } {
+  const approval = input.approval;
+  if (!approval || !input.managedCrossrefDoi || !input.fileManifestHash) return false;
+  const startDeadline = zenodoFileCorrectionStartDeadline(input.firstPublishedAt);
+  return approval.kind === 'minor_correction'
+    && approval.recordKey === input.recordKey
+    && normalizeDoi(approval.doi) === input.managedCrossrefDoi
+    && approval.fileManifestHash === input.fileManifestHash
+    && approval.approvedAt >= input.firstPublishedAt
+    && approval.approvedAt <= startDeadline
+    && approval.approvedAt <= input.observedAt
+    && !input.consumedApprovalIds.includes(approval.id);
 }
 
 function removedPublicationFileKeys(

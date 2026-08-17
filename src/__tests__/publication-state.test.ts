@@ -62,6 +62,48 @@ describe('provider sync state storage parser', () => {
     })).toThrow();
   });
 
+  it('requires an exact approval on a ready file-correction journal', () => {
+    expect(() => parseProviderSyncState({
+      zenodo: {
+        environment: 'sandbox', identifierPolicy: 'reuse-crossref',
+        journal: {
+          operationType: 'zenodo_file_update', depositionId: '42', draftRecordId: '42',
+          payloadHash: 'payload', fileManifestHash: 'files', status: 'ready_to_publish'
+        }
+      }
+    })).toThrow('Zenodo file correction journal requires approval');
+
+    const state = parseProviderSyncState({
+      zenodo: {
+        environment: 'sandbox', identifierPolicy: 'reuse-crossref',
+        firstPublishedAt: '2026-04-20T00:00:00.000Z',
+        journal: {
+          operationType: 'zenodo_file_update', depositionId: '42', draftRecordId: '42',
+          payloadHash: 'payload', fileManifestHash: 'files', status: 'ready_to_publish',
+          fileCorrectionApproval: {
+            id: 'approval-1', kind: 'minor_correction', recordKey: 'REPORT01',
+            doi: '10.53832/opendeved.1205', fileManifestHash: 'files',
+            approvedAt: '2026-05-01T00:00:00.000Z'
+          }
+        }
+      }
+    });
+
+    expect(state.zenodo?.firstPublishedAt).toEqual(new Date('2026-04-20T00:00:00.000Z'));
+    expect(state.zenodo?.journal?.fileCorrectionApproval?.approvedAt).toEqual(
+      new Date('2026-05-01T00:00:00.000Z')
+    );
+  });
+
+  it('rejects duplicate consumed file-correction approval IDs', () => {
+    expect(() => parseProviderSyncState({
+      zenodo: {
+        environment: 'sandbox', identifierPolicy: 'reuse-crossref',
+        consumedFileCorrectionApprovalIds: ['approval-1', 'approval-1']
+      }
+    })).toThrow('Consumed Zenodo file correction approval IDs must be unique');
+  });
+
   it.each(['crossref', 'zenodo', 'source', 'worker'] as const)(
     'accepts %s as a durable failure source',
     (provider) => {

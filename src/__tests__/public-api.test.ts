@@ -10,6 +10,8 @@ const expectedRuntimeExports = [
 	'DirectProviderOperationRunner',
 	'ProviderHttpError',
 	'ResilientProviderOperationRunner',
+	'ZENODO_FILE_CORRECTION_COMPLETE_WINDOW_MS',
+	'ZENODO_FILE_CORRECTION_START_WINDOW_MS',
 	'ZENODO_INVENIORDM_ACCEPT',
 	'ZenodoApiClient',
 	'analyzeDoiDrift',
@@ -40,7 +42,10 @@ const expectedRuntimeExports = [
 	'resolveDoiCandidates',
 	'settleProviderSyncFailure',
 	'settlePublicationSyncState',
-	'verifyZenodoLegacyDepositionState'
+	'verifyZenodoLegacyDepositionState',
+	'zenodoFileCorrectionApprovalSchema',
+	'zenodoFileCorrectionPublishDeadline',
+	'zenodoFileCorrectionStartDeadline'
 ].sort();
 
 describe('public API surface', () => {
