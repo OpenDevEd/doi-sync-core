@@ -22,7 +22,10 @@ import type {
   PublicationRecordSnapshot
 } from './publication/record.js';
 import type { ProviderSyncState } from './publication/state.js';
-import type { PublicationTargetPolicy } from './publication/targets.js';
+import {
+  zenodoReusedDoi,
+  type PublicationTargetPolicy
+} from './publication/targets.js';
 import {
   buildPublicationPayloadHash,
   buildPublicationPayloadSnapshots
@@ -298,9 +301,12 @@ export function planPublicationSync(input: PlanPublicationSyncInput): Publicatio
   const waitingForFile = zenodo.enabled
     && input.files.files.length === 0
     && !hasZenodoRecoveryWork;
+  const zenodoApprovalDoi = zenodo.enabled
+    ? zenodoReusedDoi(zenodo.identifierPolicy, identifiers)
+    : undefined;
   const zenodoPlanning = waitingForFile
     ? { operations: [] as const }
-    : planZenodoPublicationOperations(input, hashes, zenodoState, managedCrossrefDoi);
+    : planZenodoPublicationOperations(input, hashes, zenodoState, zenodoApprovalDoi);
   if ('issue' in zenodoPlanning) {
     return {
       status: 'needs_attention',
@@ -402,7 +408,7 @@ function planZenodoPublicationOperations(
   input: PlanPublicationSyncInput,
   hashes: PublicationSyncHashes,
   state: ProviderSyncState['zenodo'] | undefined,
-  managedCrossrefDoi: string | undefined
+  approvalDoi: string | undefined
 ): { readonly operations: readonly PublicationSyncOperation[] } | {
   readonly issue:
     | 'ZENODO_FIRST_PUBLICATION_TIME_REQUIRED'
@@ -431,7 +437,7 @@ function planZenodoPublicationOperations(
         : !isValidZenodoFileCorrectionApproval({
             approval: state.journal.fileCorrectionApproval,
             recordKey: input.record.recordKey,
-            managedCrossrefDoi,
+            approvalDoi,
             fileManifestHash: state.journal.fileManifestHash,
             firstPublishedAt: state.firstPublishedAt,
             observedAt: input.observedAt,
@@ -500,7 +506,7 @@ function planZenodoPublicationOperations(
     const validApproval = isValidZenodoFileCorrectionApproval({
       approval,
       recordKey: input.record.recordKey,
-      managedCrossrefDoi,
+      approvalDoi,
       fileManifestHash: hashes.fileManifestHash,
       firstPublishedAt: state.firstPublishedAt,
       observedAt: input.observedAt,
@@ -540,18 +546,18 @@ function planZenodoPublicationOperations(
 function isValidZenodoFileCorrectionApproval(input: {
   readonly approval: ZenodoFileCorrectionApproval | undefined;
   readonly recordKey: string;
-  readonly managedCrossrefDoi: string | undefined;
+  readonly approvalDoi: string | undefined;
   readonly fileManifestHash: string | undefined;
   readonly firstPublishedAt: Date;
   readonly observedAt: Date;
   readonly consumedApprovalIds: readonly string[];
 }): input is typeof input & { readonly approval: ZenodoFileCorrectionApproval } {
   const approval = input.approval;
-  if (!approval || !input.managedCrossrefDoi || !input.fileManifestHash) return false;
+  if (!approval || !input.approvalDoi || !input.fileManifestHash) return false;
   const startDeadline = zenodoFileCorrectionStartDeadline(input.firstPublishedAt);
   return approval.kind === 'minor_correction'
     && approval.recordKey === input.recordKey
-    && normalizeDoi(approval.doi) === input.managedCrossrefDoi
+    && normalizeDoi(approval.doi) === input.approvalDoi
     && approval.fileManifestHash === input.fileManifestHash
     && approval.approvedAt >= input.firstPublishedAt
     && approval.approvedAt <= startDeadline

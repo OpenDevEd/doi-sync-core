@@ -328,7 +328,7 @@ describe('provider-neutral live executor', () => {
 		}));
 		const journal = zenodoJournal();
 		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
-			plan: journaled as ExecuteLivePublicationSyncPlanInput['plan'],
+			plan: journaled,
 			providers: { crossref: crossref(), zenodo: provider },
 			zenodoJournal: journal
 		}));
@@ -361,7 +361,7 @@ describe('provider-neutral live executor', () => {
 			readPublishedRecord: vi.fn(() => Promise.resolve(null))
 		});
 		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
-			plan: journaled as ExecuteLivePublicationSyncPlanInput['plan'],
+			plan: journaled,
 			providers: { crossref: crossref(), zenodo: provider },
 			zenodoJournal: zenodoJournal()
 		}));

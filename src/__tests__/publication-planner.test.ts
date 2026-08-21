@@ -511,6 +511,69 @@ describe('provider-neutral publication planner', () => {
     });
   });
 
+  it('accepts exact approval before replacing files on an external-DOI Zenodo record', () => {
+    const identifiers = { bibliographicDoi: '10.1080/09500693.2021.1887' };
+    const targets = {
+      crossref: { enabled: false as const },
+      zenodo: {
+        enabled: true as const,
+        environment: 'sandbox' as const,
+        identifierPolicy: 'reuse-external' as const
+      }
+    };
+    const baseline = planPublicationSync({
+      record: publicationRecord(),
+      files: fileManifest([file({ sha256: SHA_A })]),
+      identifiers,
+      targets
+    });
+    if (baseline.status !== 'write_required' || !baseline.hashes.zenodoPayloadHash) {
+      throw new Error('expected Zenodo baseline');
+    }
+    const nextFiles = fileManifest([file({ sha256: SHA_B })]);
+    const approval = {
+      id: 'approval-external',
+      kind: 'minor_correction' as const,
+      recordKey: 'REPORT01',
+      doi: identifiers.bibliographicDoi,
+      fileManifestHash: buildPublicationFileManifestHash(nextFiles),
+      approvedAt: new Date('2026-05-20T00:00:00.000Z')
+    };
+
+    const plan = planPublicationSync({
+      observedAt: approval.approvedAt,
+      record: publicationRecord(),
+      files: nextFiles,
+      identifiers,
+      targets,
+      state: {
+        zenodo: {
+          environment: 'sandbox',
+          identifierPolicy: 'reuse-external',
+          firstPublishedAt: new Date('2026-04-20T00:00:00.000Z'),
+          lastSuccess: {
+            payloadHash: baseline.hashes.zenodoPayloadHash,
+            fileManifestHash: baseline.hashes.fileManifestHash
+          },
+          identifiers: {
+            latestRecordId: '1205',
+            parentId: '1205',
+            versionDoi: identifiers.bibliographicDoi
+          }
+        }
+      },
+      zenodoFileChangeApproval: approval
+    });
+
+    expect(plan.status).toBe('write_required');
+    expect('operations' in plan ? plan.operations : []).toEqual([
+      expect.objectContaining({
+        type: 'zenodo_file_update',
+        approval
+      })
+    ]);
+  });
+
   it('closes the Crossref-backed correction window after day 30', () => {
     const baseline = planPublicationSync({
       record: publicationRecord(), files: fileManifest([file({ sha256: SHA_A })]),
