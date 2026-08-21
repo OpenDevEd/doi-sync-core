@@ -811,9 +811,11 @@ async function recoverAlreadyPublishedDraft(
 	error: unknown
 ): Promise<ZenodoRecordIdentifiers | null> {
 	if (!(error instanceof ProviderHttpError) || error.provider !== 'zenodo' || error.status !== 404) return null;
-	const read = requireZenodoProvider(input).readPublishedRecord;
-	if (!read) return null;
-	const identifiers = await read({ token: requireZenodoToken(input), recordId: draft.draftRecordId });
+	// Call through the provider so class instances keep their `this`.
+	const identifiers = await requireZenodoProvider(input).readPublishedRecord?.({
+		token: requireZenodoToken(input),
+		recordId: draft.draftRecordId
+	});
 	if (!identifiers || identifiers.latestRecordId !== draft.draftRecordId) return null;
 	return identifiers;
 }

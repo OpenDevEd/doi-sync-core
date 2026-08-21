@@ -308,15 +308,24 @@ describe('provider-neutral live executor', () => {
 			}
 		});
 		expect(journaled.status).toBe('write_required');
-		const provider = zenodo({
+		// A class instance: the executor must call the method on the provider,
+		// not detach it, or `this` is lost.
+		class RecordingProvider {
+			readonly calls: unknown[] = [];
+			readPublishedRecord(request: { token: string; recordId: string }) {
+				this.calls.push(request);
+				return Promise.resolve({
+					latestRecordId: '42', parentId: '41', versionDoi: '10.5281/zenodo.42', conceptDoi: '10.5281/zenodo.41',
+					publishedAt: zenodoPublishedAt, links: {}
+				});
+			}
+		}
+		const recording = new RecordingProvider();
+		const provider = Object.assign(recording, zenodo({
 			publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
 				provider: 'zenodo', status: 404, body: '{"status": 404, "message": "Not found."}'
-			}))),
-			readPublishedRecord: vi.fn(() => Promise.resolve({
-				latestRecordId: '42', parentId: '41', versionDoi: '10.5281/zenodo.42', conceptDoi: '10.5281/zenodo.41',
-				publishedAt: zenodoPublishedAt, links: {}
-			}))
-		});
+			})))
+		}));
 		const journal = zenodoJournal();
 		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
 			plan: journaled as ExecuteLivePublicationSyncPlanInput['plan'],
@@ -324,7 +333,7 @@ describe('provider-neutral live executor', () => {
 			zenodoJournal: journal
 		}));
 
-		expect(provider.readPublishedRecord).toHaveBeenCalledWith({ token: 'sandbox-token', recordId: '42' });
+		expect(recording.calls).toEqual([{ token: 'sandbox-token', recordId: '42' }]);
 		expect(results).toEqual([{
 			type: 'zenodo_publish_journaled_draft', status: 'succeeded', zenodoAdoptionOnly: true,
 			zenodoPublishedAt,
