@@ -92,7 +92,7 @@ const crossrefProviderSyncStateSchema = z.object({
 
 const zenodoProviderSyncStateSchema = z.object({
   environment: z.enum(['production', 'sandbox']),
-  identifierPolicy: z.enum(['reuse-crossref', 'mint-zenodo']),
+  identifierPolicy: z.enum(['reuse-crossref', 'reuse-external', 'mint-zenodo']),
   firstPublishedAt: z.coerce.date().optional(),
   consumedFileCorrectionApprovalIds: z.array(z.string().min(1)).refine(
     (ids) => new Set(ids).size === ids.length,

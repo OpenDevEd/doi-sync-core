@@ -7,7 +7,23 @@ export type CrossrefTargetPolicy =
   | { readonly enabled: false }
   | { readonly enabled: true; readonly environment: CrossrefEnvironment };
 
-export type ZenodoIdentifierPolicy = 'reuse-crossref' | 'mint-zenodo';
+/**
+ * How Zenodo gets its DOI:
+ * - `reuse-crossref`: the DOI this library registered with Crossref.
+ * - `reuse-external`: the DOI the record already had from elsewhere; nothing is registered.
+ * - `mint-zenodo`: Zenodo mints its own DOI.
+ */
+export type ZenodoIdentifierPolicy = 'reuse-crossref' | 'reuse-external' | 'mint-zenodo';
+
+/** The DOI Zenodo must publish under for a reuse policy, or undefined when Zenodo mints. */
+export function zenodoReusedDoi(
+  identifierPolicy: ZenodoIdentifierPolicy,
+  identifiers: { readonly managedCrossrefDoi?: string | undefined; readonly bibliographicDoi?: string | undefined }
+): string | undefined {
+  if (identifierPolicy === 'reuse-crossref') return identifiers.managedCrossrefDoi;
+  if (identifierPolicy === 'reuse-external') return identifiers.bibliographicDoi;
+  return undefined;
+}
 
 export type ZenodoTargetPolicy =
   | { readonly enabled: false }
@@ -32,7 +48,7 @@ const zenodoTargetPolicySchema: z.ZodType<ZenodoTargetPolicy> = z.discriminatedU
   z.object({
     enabled: z.literal(true),
     environment: z.enum(['sandbox', 'production']),
-    identifierPolicy: z.enum(['reuse-crossref', 'mint-zenodo'])
+    identifierPolicy: z.enum(['reuse-crossref', 'reuse-external', 'mint-zenodo'])
   }).strict()
 ]);
 

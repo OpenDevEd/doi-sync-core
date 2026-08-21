@@ -47,7 +47,7 @@ export function buildCrossrefPayloadSnapshot(input: BuildCrossrefPayloadSnapshot
 
 export function buildZenodoPayloadSnapshot(input: BuildZenodoPayloadSnapshotInput): JsonValue {
 	const payload = buildZenodoWritePayload({
-		doiPolicy: input.identifierPolicy === 'reuse-crossref' ? 'external-crossref' : 'dual',
+		doiPolicy: input.identifierPolicy === 'mint-zenodo' ? 'dual' : 'external-crossref',
 		metadata: buildZenodoProviderMetadata({
 			record: input.record,
 			identifiers: input.identifiers,

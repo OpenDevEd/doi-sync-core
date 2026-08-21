@@ -138,6 +138,7 @@ export type PublicationSyncPlan =
       readonly provider: 'crossref' | 'zenodo';
       readonly reason:
         | 'MISSING_MANAGED_CROSSREF_DOI'
+        | 'MISSING_EXTERNAL_DOI'
         | 'MISSING_ZENODO_PROVIDER_RECORD_ID'
         | 'CROSSREF_VALIDATION_FAILED'
         | 'ZENODO_VALIDATION_FAILED'
@@ -184,6 +185,15 @@ export function planPublicationSync(input: PlanPublicationSyncInput): Publicatio
       status: 'needs_attention',
       provider: crossref.enabled ? 'crossref' : 'zenodo',
       reason: 'MISSING_MANAGED_CROSSREF_DOI',
+      operations: []
+    };
+  }
+
+  if (zenodo.enabled && zenodo.identifierPolicy === 'reuse-external' && !identifiers.bibliographicDoi) {
+    return {
+      status: 'needs_attention',
+      provider: 'zenodo',
+      reason: 'MISSING_EXTERNAL_DOI',
       operations: []
     };
   }
@@ -266,7 +276,11 @@ export function planPublicationSync(input: PlanPublicationSyncInput): Publicatio
     } } : {}),
     ...(zenodo.enabled ? { zenodo: {
       record: input.record,
-      identifiers: zenodo.identifierPolicy === 'reuse-crossref' ? crossrefIdentifiers : {},
+      identifiers: zenodo.identifierPolicy === 'reuse-crossref'
+        ? crossrefIdentifiers
+        : zenodo.identifierPolicy === 'reuse-external' && identifiers.bibliographicDoi
+          ? { bibliographicDoi: identifiers.bibliographicDoi }
+          : {},
       identifierPolicy: zenodo.identifierPolicy
     } } : {}),
     files: input.files

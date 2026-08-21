@@ -46,3 +46,13 @@ function record(overrides: Partial<PublicationRecordSnapshot> = {}): Publication
 		...overrides
 	};
 }
+
+describe('reuse-external', () => {
+	it('sends the record\'s own DOI to Zenodo', () => {
+		expect(buildZenodoProviderMetadata({
+			record: record(),
+			identifiers: { bibliographicDoi: '10.1080/09500693.2021.1887' },
+			identifierPolicy: 'reuse-external'
+		})).toMatchObject({ doi: '10.1080/09500693.2021.1887' });
+	});
+});

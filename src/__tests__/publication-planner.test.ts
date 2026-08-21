@@ -140,6 +140,41 @@ describe('provider-neutral publication planner', () => {
     });
   });
 
+  it('archives under the DOI the record already has without touching Crossref', () => {
+    const plan = planPublicationSync({
+      record: publicationRecord(),
+      files: fileManifest(),
+      identifiers: { bibliographicDoi: '10.1080/09500693.2021.1887' },
+      targets: {
+        crossref: { enabled: false },
+        zenodo: { enabled: true, environment: 'sandbox', identifierPolicy: 'reuse-external' }
+      }
+    });
+
+    expect(plan.status).toBe('write_required');
+    if (plan.status !== 'write_required') throw new Error('expected write-required plan');
+    expect(plan.operations.map(({ type }) => type)).toEqual(['zenodo_create']);
+    const payload = JSON.stringify(plan.snapshots.zenodoPayload);
+    expect(payload).toContain('"doi":"10.1080/09500693.2021.1887"');
+    expect(payload).not.toContain('prereserve_doi');
+  });
+
+  it('needs attention when reuse-external is asked for without a record DOI', () => {
+    const plan = planPublicationSync({
+      record: publicationRecord(),
+      files: fileManifest(),
+      identifiers: {},
+      targets: {
+        crossref: { enabled: false },
+        zenodo: { enabled: true, environment: 'sandbox', identifierPolicy: 'reuse-external' }
+      }
+    });
+
+    expect(plan).toEqual({
+      status: 'needs_attention', provider: 'zenodo', reason: 'MISSING_EXTERNAL_DOI', operations: []
+    });
+  });
+
   it('waits locally for a published file instead of planning an empty Zenodo draft', () => {
     const plan = planPublicationSync({
       record: publicationRecord(),

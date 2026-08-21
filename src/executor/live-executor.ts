@@ -22,10 +22,11 @@ import type { PublicationFile } from '../publication/files.js';
 import type {
 	PublicationProviderMetadata
 } from '../publication/record.js';
-import type {
-	CrossrefTargetPolicy,
-	PublicationTargetPolicy,
-	ZenodoTargetPolicy
+import {
+	type CrossrefTargetPolicy,
+	type PublicationTargetPolicy,
+	type ZenodoTargetPolicy,
+	zenodoReusedDoi
 } from '../publication/targets.js';
 import type { PublicationFileReader } from '../ports.js';
 import { ProviderHttpError } from '../resilience/errors.js';
@@ -752,11 +753,13 @@ async function recoverZenodoDoiConflict(
 	error: unknown
 ): Promise<ZenodoDoiConflictRecovery | null> {
 	if (!isZenodoDoiAlreadyExistsError(error)) return null;
-	const doi = plan.identifiers.managedCrossrefDoi;
-	if (!doi || !plan.targets.zenodo.enabled || plan.targets.zenodo.identifierPolicy !== 'reuse-crossref') {
+	const doi = plan.targets.zenodo.enabled
+		? zenodoReusedDoi(plan.targets.zenodo.identifierPolicy, plan.identifiers)
+		: undefined;
+	if (!doi) {
 		return {
 			result: failed(operationType, 'ZENODO_DOI_ALREADY_EXISTS_UNEXPECTED',
-				'Zenodo reported a DOI collision for a record that does not reuse a Crossref DOI')
+				'Zenodo reported a DOI collision for a record that does not reuse a DOI')
 		};
 	}
 	const lookup = await requireZenodoProvider(input).findRecordByDoi?.({

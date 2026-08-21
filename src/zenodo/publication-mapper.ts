@@ -3,7 +3,7 @@ import type {
 	PublicationProviderMetadata,
 	PublicationRecordSnapshot
 } from '../publication/record.js';
-import type { ZenodoIdentifierPolicy } from '../publication/targets.js';
+import { zenodoReusedDoi, type ZenodoIdentifierPolicy } from '../publication/targets.js';
 import { ZENODO_LANGUAGE_CODES } from '../publication/languages.js';
 import { ZENODO_LICENSE_IDS } from './licenses.js';
 import { mapZenodoResourceType } from './resource-mapper.js';
@@ -65,6 +65,7 @@ export function buildZenodoProviderMetadata(input: {
 	const issues = validateZenodoPublicationRecord(input.record);
 	if (issues.length > 0) throw new Error(`Zenodo validation failed: ${issues.map((issue) => issue.path).join(', ')}`);
 	const { record } = input;
+	const reusedDoi = zenodoReusedDoi(input.identifierPolicy, input.identifiers);
 	return {
 		itemType: record.itemType,
 		title: record.title,
@@ -77,9 +78,7 @@ export function buildZenodoProviderMetadata(input: {
 		...(record.license ? { license: record.license.toLowerCase() } : {}),
 		creators: record.creators,
 		tags: record.tags,
-		...(input.identifierPolicy === 'reuse-crossref' && input.identifiers.managedCrossrefDoi
-			? { doi: input.identifiers.managedCrossrefDoi }
-			: {})
+		...(reusedDoi ? { doi: reusedDoi } : {})
 	};
 }
 
