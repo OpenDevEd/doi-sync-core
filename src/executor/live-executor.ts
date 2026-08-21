@@ -100,6 +100,11 @@ export interface ZenodoWriter {
 		readonly token: string;
 		readonly doi: string;
 	}) => Promise<ZenodoDoiLookupResult>;
+	/** The published record with this id, or null when none is published. */
+	readonly readPublishedRecord?: (input: {
+		readonly token: string;
+		readonly recordId: string;
+	}) => Promise<ZenodoRecordIdentifiers | null>;
 	readonly deleteUnpublishedDraft?: (input: {
 		readonly token: string;
 		readonly depositionId: string;
@@ -565,6 +570,17 @@ async function publishJournaledDraft(
 			zenodo: toSettlementIdentifiers(identifiers)
 		};
 	} catch (error) {
+		const alreadyPublished = await recoverAlreadyPublishedDraft(input, draft, error);
+		if (alreadyPublished) {
+			await markDraftPublished(input, plan, draft, alreadyPublished, observedAt);
+			return {
+				type: operation.type,
+				status: 'succeeded',
+				zenodoAdoptionOnly: true,
+				zenodoPublishedAt: alreadyPublished.publishedAt,
+				zenodo: toSettlementIdentifiers(alreadyPublished)
+			};
+		}
 		const recovered = await recoverZenodoDoiConflict(input, plan, operation.type, error);
 		if (!recovered?.identifiers) return recovered?.result ?? failedFromError(operation.type, error);
 		const orphanDraftCleanup = orphanCreateDraftCleanup(
@@ -782,6 +798,24 @@ async function recoverZenodoDoiConflict(
 		result: failed(operationType, 'ZENODO_DOI_ALREADY_EXISTS_UNRESOLVED',
 			unresolvedZenodoDoiConflictSummary(doi, lookup))
 	};
+}
+
+/**
+ * Publishing a journaled draft answered 404. That happens when an earlier run
+ * published it on Zenodo but failed before the journal was cleared: the
+ * published record keeps the draft's id. Adopt it instead of retrying forever.
+ */
+async function recoverAlreadyPublishedDraft(
+	input: ExecuteLivePublicationSyncPlanInput,
+	draft: ZenodoPreparedDraft,
+	error: unknown
+): Promise<ZenodoRecordIdentifiers | null> {
+	if (!(error instanceof ProviderHttpError) || error.provider !== 'zenodo' || error.status !== 404) return null;
+	const read = requireZenodoProvider(input).readPublishedRecord;
+	if (!read) return null;
+	const identifiers = await read({ token: requireZenodoToken(input), recordId: draft.draftRecordId });
+	if (!identifiers || identifiers.latestRecordId !== draft.draftRecordId) return null;
+	return identifiers;
 }
 
 function isZenodoDoiAlreadyExistsError(error: unknown): boolean {

@@ -284,6 +284,81 @@ describe('provider-neutral live executor', () => {
 		});
 	});
 
+	it('adopts a journaled draft that Zenodo already published when publish answers 404', async () => {
+		// The first run published the draft on Zenodo, then our settlement
+		// failed before the journal was cleared. The retry must not loop on
+		// the 404 forever: the published record keeps the draft's id.
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const base = plan(targets);
+		if (base.status !== 'write_required' || !base.hashes.zenodoPayloadHash) throw new Error('expected Zenodo baseline');
+		const journaled = planPublicationSync({
+			record: base.record, files: base.files, identifiers: {}, targets,
+			state: {
+				zenodo: {
+					environment: 'sandbox', identifierPolicy: 'mint-zenodo',
+					journal: {
+						operationType: 'zenodo_create', depositionId: '42', draftRecordId: '42', parentId: '41',
+						payloadHash: base.hashes.zenodoPayloadHash, fileManifestHash: base.hashes.fileManifestHash,
+						status: 'ready_to_publish'
+					}
+				}
+			}
+		});
+		expect(journaled.status).toBe('write_required');
+		const provider = zenodo({
+			publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
+				provider: 'zenodo', status: 404, body: '{"status": 404, "message": "Not found."}'
+			}))),
+			readPublishedRecord: vi.fn(() => Promise.resolve({
+				latestRecordId: '42', parentId: '41', versionDoi: '10.5281/zenodo.42', conceptDoi: '10.5281/zenodo.41',
+				publishedAt: zenodoPublishedAt, links: {}
+			}))
+		});
+		const journal = zenodoJournal();
+		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: journaled as ExecuteLivePublicationSyncPlanInput['plan'],
+			providers: { crossref: crossref(), zenodo: provider },
+			zenodoJournal: journal
+		}));
+
+		expect(provider.readPublishedRecord).toHaveBeenCalledWith({ token: 'sandbox-token', recordId: '42' });
+		expect(results).toEqual([{
+			type: 'zenodo_publish_journaled_draft', status: 'succeeded', zenodoAdoptionOnly: true,
+			zenodoPublishedAt,
+			zenodo: { latestRecordId: '42', parentId: '41', versionDoi: '10.5281/zenodo.42', conceptDoi: '10.5281/zenodo.41' }
+		}]);
+		expect(journal.markZenodoPublishDraftPublished).toHaveBeenCalledOnce();
+	});
+
+	it('keeps failing when publish answers 404 and no published record exists under the draft id', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const base = plan(targets);
+		if (base.status !== 'write_required' || !base.hashes.zenodoPayloadHash) throw new Error('expected Zenodo baseline');
+		const journaled = planPublicationSync({
+			record: base.record, files: base.files, identifiers: {}, targets,
+			state: { zenodo: { environment: 'sandbox', identifierPolicy: 'mint-zenodo', journal: {
+				operationType: 'zenodo_create', depositionId: '42', draftRecordId: '42', parentId: '41',
+				payloadHash: base.hashes.zenodoPayloadHash, fileManifestHash: base.hashes.fileManifestHash, status: 'ready_to_publish'
+			} } }
+		});
+		const provider = zenodo({
+			publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({ provider: 'zenodo', status: 404, body: '{"status": 404}' }))),
+			readPublishedRecord: vi.fn(() => Promise.resolve(null))
+		});
+		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: journaled as ExecuteLivePublicationSyncPlanInput['plan'],
+			providers: { crossref: crossref(), zenodo: provider },
+			zenodoJournal: zenodoJournal()
+		}));
+		expect(results[0]).toMatchObject({ type: 'zenodo_publish_journaled_draft', status: 'failed', failureClass: 'ProviderHttpError' });
+	});
+
 	it('journals orphan cleanup before deletion and preserves provider method binding', async () => {
 		const targets = {
 			crossref: { enabled: true as const, environment: 'test' as const },
