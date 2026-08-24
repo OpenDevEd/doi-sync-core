@@ -368,6 +368,45 @@ describe('provider-neutral live executor', () => {
 		expect(results[0]).toMatchObject({ type: 'zenodo_publish_journaled_draft', status: 'failed', failureClass: 'ProviderHttpError' });
 	});
 
+	it('does not adopt an unchanged published record for a failed metadata update', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const base = plan(targets);
+		if (base.status !== 'write_required' || !base.hashes.zenodoPayloadHash) throw new Error('expected Zenodo baseline');
+		const journaled = planPublicationSync({
+			record: base.record, files: base.files, identifiers: {}, targets,
+			state: { zenodo: {
+				environment: 'sandbox', identifierPolicy: 'mint-zenodo',
+				journal: {
+				operationType: 'zenodo_metadata_update', depositionId: '42', draftRecordId: '42', parentId: '41',
+				payloadHash: base.hashes.zenodoPayloadHash, status: 'ready_to_publish'
+			} } }
+		});
+		const readPublishedRecord = vi.fn(() => Promise.resolve({
+			latestRecordId: '42', parentId: '41', versionDoi: '10.5281/zenodo.42',
+			publishedAt: zenodoPublishedAt, links: {}
+		}));
+		const provider = zenodo({
+			publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({ provider: 'zenodo', status: 404, body: '{"status": 404}' }))),
+			readPublishedRecord
+		});
+		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: journaled,
+			providers: { crossref: crossref(), zenodo: provider },
+			zenodoJournal: zenodoJournal(),
+			now: () => new Date('2026-05-21T00:00:00.000Z')
+		}));
+
+		expect(readPublishedRecord).not.toHaveBeenCalled();
+		expect(results[0]).toMatchObject({
+			type: 'zenodo_publish_journaled_draft',
+			status: 'failed',
+			failureClass: 'ProviderHttpError'
+		});
+	});
+
 	it('journals orphan cleanup before deletion and preserves provider method binding', async () => {
 		const targets = {
 			crossref: { enabled: true as const, environment: 'test' as const },

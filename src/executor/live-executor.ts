@@ -570,7 +570,12 @@ async function publishJournaledDraft(
 			zenodo: toSettlementIdentifiers(identifiers)
 		};
 	} catch (error) {
-		const alreadyPublished = await recoverAlreadyPublishedDraft(input, draft, error);
+		const alreadyPublished = await recoverAlreadyPublishedDraft(
+			input,
+			operation.originalOperationType,
+			draft,
+			error
+		);
 		if (alreadyPublished) {
 			await markDraftPublished(input, plan, draft, alreadyPublished, observedAt);
 			return {
@@ -807,10 +812,16 @@ async function recoverZenodoDoiConflict(
  */
 async function recoverAlreadyPublishedDraft(
 	input: ExecuteLivePublicationSyncPlanInput,
+	operationType: ZenodoPublishJournalOperationType,
 	draft: ZenodoPreparedDraft,
 	error: unknown
 ): Promise<ZenodoRecordIdentifiers | null> {
 	if (!(error instanceof ProviderHttpError) || error.provider !== 'zenodo' || error.status !== 404) return null;
+	// Metadata and same-record file updates reuse an existing published record
+	// id. Reading that record after a failed publish cannot prove that Zenodo
+	// applied this draft. Creates and new versions use a new record id, so a
+	// published record under that id can only be the journaled draft.
+	if (operationType !== 'zenodo_create' && operationType !== 'zenodo_new_version') return null;
 	// Call through the provider so class instances keep their `this`.
 	const identifiers = await requireZenodoProvider(input).readPublishedRecord?.({
 		token: requireZenodoToken(input),
