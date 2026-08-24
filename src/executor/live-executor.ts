@@ -22,10 +22,11 @@ import type { PublicationFile } from '../publication/files.js';
 import type {
 	PublicationProviderMetadata
 } from '../publication/record.js';
-import type {
-	CrossrefTargetPolicy,
-	PublicationTargetPolicy,
-	ZenodoTargetPolicy
+import {
+	type CrossrefTargetPolicy,
+	type PublicationTargetPolicy,
+	type ZenodoTargetPolicy,
+	zenodoReusedDoi
 } from '../publication/targets.js';
 import type { PublicationFileReader } from '../ports.js';
 import { ProviderHttpError } from '../resilience/errors.js';
@@ -99,6 +100,11 @@ export interface ZenodoWriter {
 		readonly token: string;
 		readonly doi: string;
 	}) => Promise<ZenodoDoiLookupResult>;
+	/** The published record with this id, or null when none is published. */
+	readonly readPublishedRecord?: (input: {
+		readonly token: string;
+		readonly recordId: string;
+	}) => Promise<ZenodoRecordIdentifiers | null>;
 	readonly deleteUnpublishedDraft?: (input: {
 		readonly token: string;
 		readonly depositionId: string;
@@ -564,6 +570,22 @@ async function publishJournaledDraft(
 			zenodo: toSettlementIdentifiers(identifiers)
 		};
 	} catch (error) {
+		const alreadyPublished = await recoverAlreadyPublishedDraft(
+			input,
+			operation.originalOperationType,
+			draft,
+			error
+		);
+		if (alreadyPublished) {
+			await markDraftPublished(input, plan, draft, alreadyPublished, observedAt);
+			return {
+				type: operation.type,
+				status: 'succeeded',
+				zenodoAdoptionOnly: true,
+				zenodoPublishedAt: alreadyPublished.publishedAt,
+				zenodo: toSettlementIdentifiers(alreadyPublished)
+			};
+		}
 		const recovered = await recoverZenodoDoiConflict(input, plan, operation.type, error);
 		if (!recovered?.identifiers) return recovered?.result ?? failedFromError(operation.type, error);
 		const orphanDraftCleanup = orphanCreateDraftCleanup(
@@ -752,11 +774,13 @@ async function recoverZenodoDoiConflict(
 	error: unknown
 ): Promise<ZenodoDoiConflictRecovery | null> {
 	if (!isZenodoDoiAlreadyExistsError(error)) return null;
-	const doi = plan.identifiers.managedCrossrefDoi;
-	if (!doi || !plan.targets.zenodo.enabled || plan.targets.zenodo.identifierPolicy !== 'reuse-crossref') {
+	const doi = plan.targets.zenodo.enabled
+		? zenodoReusedDoi(plan.targets.zenodo.identifierPolicy, plan.identifiers)
+		: undefined;
+	if (!doi) {
 		return {
 			result: failed(operationType, 'ZENODO_DOI_ALREADY_EXISTS_UNEXPECTED',
-				'Zenodo reported a DOI collision for a record that does not reuse a Crossref DOI')
+				'Zenodo reported a DOI collision for a record that does not reuse a DOI')
 		};
 	}
 	const lookup = await requireZenodoProvider(input).findRecordByDoi?.({
@@ -779,6 +803,32 @@ async function recoverZenodoDoiConflict(
 		result: failed(operationType, 'ZENODO_DOI_ALREADY_EXISTS_UNRESOLVED',
 			unresolvedZenodoDoiConflictSummary(doi, lookup))
 	};
+}
+
+/**
+ * Publishing a journaled draft answered 404. That happens when an earlier run
+ * published it on Zenodo but failed before the journal was cleared: the
+ * published record keeps the draft's id. Adopt it instead of retrying forever.
+ */
+async function recoverAlreadyPublishedDraft(
+	input: ExecuteLivePublicationSyncPlanInput,
+	operationType: ZenodoPublishJournalOperationType,
+	draft: ZenodoPreparedDraft,
+	error: unknown
+): Promise<ZenodoRecordIdentifiers | null> {
+	if (!(error instanceof ProviderHttpError) || error.provider !== 'zenodo' || error.status !== 404) return null;
+	// Metadata and same-record file updates reuse an existing published record
+	// id. Reading that record after a failed publish cannot prove that Zenodo
+	// applied this draft. Creates and new versions use a new record id, so a
+	// published record under that id can only be the journaled draft.
+	if (operationType !== 'zenodo_create' && operationType !== 'zenodo_new_version') return null;
+	// Call through the provider so class instances keep their `this`.
+	const identifiers = await requireZenodoProvider(input).readPublishedRecord?.({
+		token: requireZenodoToken(input),
+		recordId: draft.draftRecordId
+	});
+	if (!identifiers || identifiers.latestRecordId !== draft.draftRecordId) return null;
+	return identifiers;
 }
 
 function isZenodoDoiAlreadyExistsError(error: unknown): boolean {

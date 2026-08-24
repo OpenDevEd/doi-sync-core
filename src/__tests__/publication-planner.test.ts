@@ -140,6 +140,41 @@ describe('provider-neutral publication planner', () => {
     });
   });
 
+  it('archives under the DOI the record already has without touching Crossref', () => {
+    const plan = planPublicationSync({
+      record: publicationRecord(),
+      files: fileManifest(),
+      identifiers: { bibliographicDoi: '10.1080/09500693.2021.1887' },
+      targets: {
+        crossref: { enabled: false },
+        zenodo: { enabled: true, environment: 'sandbox', identifierPolicy: 'reuse-external' }
+      }
+    });
+
+    expect(plan.status).toBe('write_required');
+    if (plan.status !== 'write_required') throw new Error('expected write-required plan');
+    expect(plan.operations.map(({ type }) => type)).toEqual(['zenodo_create']);
+    const payload = JSON.stringify(plan.snapshots.zenodoPayload);
+    expect(payload).toContain('"doi":"10.1080/09500693.2021.1887"');
+    expect(payload).not.toContain('prereserve_doi');
+  });
+
+  it('needs attention when reuse-external is asked for without a record DOI', () => {
+    const plan = planPublicationSync({
+      record: publicationRecord(),
+      files: fileManifest(),
+      identifiers: {},
+      targets: {
+        crossref: { enabled: false },
+        zenodo: { enabled: true, environment: 'sandbox', identifierPolicy: 'reuse-external' }
+      }
+    });
+
+    expect(plan).toEqual({
+      status: 'needs_attention', provider: 'zenodo', reason: 'MISSING_EXTERNAL_DOI', operations: []
+    });
+  });
+
   it('waits locally for a published file instead of planning an empty Zenodo draft', () => {
     const plan = planPublicationSync({
       record: publicationRecord(),
@@ -474,6 +509,69 @@ describe('provider-neutral publication planner', () => {
       status: 'needs_attention', provider: 'zenodo',
       reason: 'ZENODO_FILE_CORRECTION_APPROVAL_REQUIRED', operations: []
     });
+  });
+
+  it('accepts exact approval before replacing files on an external-DOI Zenodo record', () => {
+    const identifiers = { bibliographicDoi: '10.1080/09500693.2021.1887' };
+    const targets = {
+      crossref: { enabled: false as const },
+      zenodo: {
+        enabled: true as const,
+        environment: 'sandbox' as const,
+        identifierPolicy: 'reuse-external' as const
+      }
+    };
+    const baseline = planPublicationSync({
+      record: publicationRecord(),
+      files: fileManifest([file({ sha256: SHA_A })]),
+      identifiers,
+      targets
+    });
+    if (baseline.status !== 'write_required' || !baseline.hashes.zenodoPayloadHash) {
+      throw new Error('expected Zenodo baseline');
+    }
+    const nextFiles = fileManifest([file({ sha256: SHA_B })]);
+    const approval = {
+      id: 'approval-external',
+      kind: 'minor_correction' as const,
+      recordKey: 'REPORT01',
+      doi: identifiers.bibliographicDoi,
+      fileManifestHash: buildPublicationFileManifestHash(nextFiles),
+      approvedAt: new Date('2026-05-20T00:00:00.000Z')
+    };
+
+    const plan = planPublicationSync({
+      observedAt: approval.approvedAt,
+      record: publicationRecord(),
+      files: nextFiles,
+      identifiers,
+      targets,
+      state: {
+        zenodo: {
+          environment: 'sandbox',
+          identifierPolicy: 'reuse-external',
+          firstPublishedAt: new Date('2026-04-20T00:00:00.000Z'),
+          lastSuccess: {
+            payloadHash: baseline.hashes.zenodoPayloadHash,
+            fileManifestHash: baseline.hashes.fileManifestHash
+          },
+          identifiers: {
+            latestRecordId: '1205',
+            parentId: '1205',
+            versionDoi: identifiers.bibliographicDoi
+          }
+        }
+      },
+      zenodoFileChangeApproval: approval
+    });
+
+    expect(plan.status).toBe('write_required');
+    expect('operations' in plan ? plan.operations : []).toEqual([
+      expect.objectContaining({
+        type: 'zenodo_file_update',
+        approval
+      })
+    ]);
   });
 
   it('closes the Crossref-backed correction window after day 30', () => {

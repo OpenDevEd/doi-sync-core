@@ -30,3 +30,15 @@ describe('publication target policy', () => {
     })).toThrow(/requires Crossref/i);
   });
 });
+
+describe('Zenodo reusing a DOI the record already has', () => {
+  it('does not require Crossref', () => {
+    expect(parsePublicationTargetPolicy({
+      crossref: { enabled: false },
+      zenodo: { enabled: true, environment: 'sandbox', identifierPolicy: 'reuse-external' }
+    })).toEqual({
+      crossref: { enabled: false },
+      zenodo: { enabled: true, environment: 'sandbox', identifierPolicy: 'reuse-external' }
+    });
+  });
+});

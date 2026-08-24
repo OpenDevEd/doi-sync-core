@@ -184,6 +184,11 @@ export class ZenodoApiClient {
     };
   }
 
+  async readPublishedRecord(input: ReadZenodoRecordSnapshotInput): Promise<ZenodoRecordIdentifiers | null> {
+    const snapshot = await this.readRecordSnapshot(input);
+    return snapshot?.identifiers ?? null;
+  }
+
   async readRecordSnapshot(input: ReadZenodoRecordSnapshotInput): Promise<ZenodoRecordSnapshot | null> {
     const response = await this.request(`${this.endpoint}/api/records/${encodeURIComponent(input.recordId)}`, {
       method: 'GET',
