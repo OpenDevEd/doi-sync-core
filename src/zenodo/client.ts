@@ -78,7 +78,7 @@ export interface ZenodoCreateRecordInput {
   readonly onPreparedDraft?: (draft: ZenodoPreparedDraft) => Promise<void>;
 }
 
-export type ZenodoPrepareEmptyDraftInput = Pick<ZenodoCreateRecordInput, 'token' | 'onPreparedDraft'>;
+export type ZenodoPrepareEmptyDraftInput = Required<Pick<ZenodoCreateRecordInput, 'token' | 'onPreparedDraft'>>;
 
 export interface ZenodoAdoptLegacyDepositionInput extends ZenodoCreateRecordInput {
   readonly depositionId: string;
@@ -276,7 +276,8 @@ export class ZenodoApiClient {
 
   async prepareCreateRecord(input: ZenodoCreateRecordInput): Promise<ZenodoPreparedDraft> {
     if (input.draftDepositionId) {
-      return this.prepareAdoptLegacyDeposition({...input, depositionId: input.draftDepositionId});
+      const existing = await this.getDeposition(input.token, input.draftDepositionId);
+      if (existing) return this.prepareExistingDeposition(input, existing);
     }
     const deposition = await this.createEmptyDeposition(input.token, input.onPreparedDraft);
     const draft = toPreparedDraft(deposition);
@@ -288,6 +289,11 @@ export class ZenodoApiClient {
 
   async prepareAdoptLegacyDeposition(input: ZenodoAdoptLegacyDepositionInput): Promise<ZenodoPreparedDraft> {
     const deposition = await this.getDeposition(input.token, input.depositionId);
+    if (!deposition) throw new Error(`Zenodo deposition ${input.depositionId} no longer exists`);
+    return this.prepareExistingDeposition(input, deposition);
+  }
+
+  private async prepareExistingDeposition(input: ZenodoCreateRecordInput, deposition: ZenodoDeposition): Promise<ZenodoPreparedDraft> {
     const draft = toPreparedDraft(deposition);
     await input.onPreparedDraft?.(draft);
     await this.replaceLegacyDepositionFiles(input.token, deposition, input.files);
@@ -402,11 +408,12 @@ export class ZenodoApiClient {
     return deposition;
   }
 
-  private async getDeposition(token: string, depositionId: string): Promise<ZenodoDeposition> {
+  private async getDeposition(token: string, depositionId: string): Promise<ZenodoDeposition | null> {
     const response = await this.request(`${this.endpoint}/api/deposit/depositions/${encodeURIComponent(depositionId)}`, {
       method: 'GET',
       headers: authHeaders(token)
-    });
+    }, {allowedStatuses: [404]});
+    if (response.status === 404) return null;
     return parseDeposition(await response.json());
   }
 

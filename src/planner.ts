@@ -423,6 +423,9 @@ function planZenodoPublicationOperations(
     }] };
   }
   if (state?.journal?.status === 'preparing') {
+    if (state.journal.operationType === 'zenodo_create' && state.unpublishedDraft?.depositionId === state.journal.depositionId) {
+      return {operations: [{type: 'zenodo_create', draftDepositionId: state.unpublishedDraft.depositionId, payloadHash: hashes.zenodoPayloadHash, fileManifestHash: hashes.fileManifestHash}]};
+    }
     return { operations: [{
       type: 'zenodo_discard_preparing_draft',
       originalOperationType: state.journal.operationType,

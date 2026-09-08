@@ -861,3 +861,13 @@ it('continues the existing unpublished Zenodo draft when approved files arrive',
   expect(result.status).toBe('write_required');
   expect(result.operations).toEqual([expect.objectContaining({type: 'zenodo_create', draftDepositionId: '700001'})]);
 });
+
+it('retries preparation of a saved empty draft without discarding it', () => {
+  const plan = planPublicationSync({
+    record: publicationRecord(), files: fileManifest(), identifiers: {}, targets: zenodoMintTarget(),
+    state: {zenodo: {environment: 'sandbox', identifierPolicy: 'mint-zenodo', unpublishedDraft: {depositionId: '42'},
+      journal: {operationType: 'zenodo_create', depositionId: '42', draftRecordId: '42', payloadHash: 'old-payload', fileManifestHash: 'old-files', status: 'preparing'}
+    }}
+  });
+  expect(plan.operations).toEqual([expect.objectContaining({type: 'zenodo_create', draftDepositionId: '42'})]);
+});
