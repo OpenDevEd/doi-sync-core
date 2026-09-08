@@ -67,6 +67,7 @@ export interface ZenodoUploadFile {
 }
 
 export interface ZenodoCreateRecordInput {
+  readonly draftDepositionId?: string;
   readonly token: string;
   readonly doiPolicy: DoiPolicy;
   readonly metadata: PublicationProviderMetadata;
@@ -274,6 +275,9 @@ export class ZenodoApiClient {
   }
 
   async prepareCreateRecord(input: ZenodoCreateRecordInput): Promise<ZenodoPreparedDraft> {
+    if (input.draftDepositionId) {
+      return this.prepareAdoptLegacyDeposition({...input, depositionId: input.draftDepositionId});
+    }
     const deposition = await this.createEmptyDeposition(input.token, input.onPreparedDraft);
     const draft = toPreparedDraft(deposition);
     await this.uploadFilesToBucket(input.token, deposition, input.files);

@@ -62,7 +62,7 @@ export type PublicationSyncOperation =
       readonly payloadHash: string;
       readonly relation?: CrossrefRelation;
     }
-  | { readonly type: 'zenodo_create'; readonly payloadHash: string; readonly fileManifestHash: string }
+  | { readonly type: 'zenodo_create'; readonly draftDepositionId?: string; readonly payloadHash: string; readonly fileManifestHash: string }
   | {
       readonly type: 'zenodo_metadata_update';
       readonly latestRecordId: string;
@@ -476,6 +476,7 @@ function planZenodoPublicationOperations(
   if (!state?.identifiers?.latestRecordId) {
     return { operations: [{
       type: 'zenodo_create',
+      ...(state?.unpublishedDraft ? {draftDepositionId: state.unpublishedDraft.depositionId} : {}),
       payloadHash: hashes.zenodoPayloadHash,
       fileManifestHash: hashes.fileManifestHash
     }] };

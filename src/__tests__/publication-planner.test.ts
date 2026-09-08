@@ -851,3 +851,13 @@ function zenodoReuseCrossrefTarget() {
     }
   };
 }
+
+it('continues the existing unpublished Zenodo draft when approved files arrive', () => {
+  const result = planPublicationSync({
+    record: publicationRecord(), files: fileManifest(), identifiers: {},
+    targets: {crossref: {enabled: false}, zenodo: {enabled: true, environment: 'production', identifierPolicy: 'mint-zenodo'}},
+    state: {zenodo: {environment: 'production', identifierPolicy: 'mint-zenodo', unpublishedDraft: {depositionId: '700001'}}}
+  });
+  expect(result.status).toBe('write_required');
+  expect(result.operations).toEqual([expect.objectContaining({type: 'zenodo_create', draftDepositionId: '700001'})]);
+});
