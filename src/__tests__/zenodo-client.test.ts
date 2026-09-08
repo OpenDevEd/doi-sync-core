@@ -1587,3 +1587,18 @@ describe('ZenodoApiClient', () => {
     ]);
   });
 });
+
+describe('empty Zenodo draft preparation', () => {
+  it('creates and journals an unpublished draft without metadata or files', async () => {
+    const requests: {url: string; method: string | undefined; body: BodyInit | null | undefined}[] = [];
+    const persisted: unknown[] = [];
+    const client = new ZenodoApiClient({endpoint: 'https://zenodo.org', fetch: (url, init) => {
+      requests.push({url, method: init.method, body: init.body});
+      return Promise.resolve(response(legacyDeposition('700001')));
+    }});
+    const draft = await client.prepareEmptyDraft({token: 'token', onPreparedDraft: value => {persisted.push(value); return Promise.resolve();}});
+    expect(draft.depositionId).toBe('700001');
+    expect(persisted).toEqual([draft]);
+    expect(requests).toEqual([{url: 'https://zenodo.org/api/deposit/depositions', method: 'POST', body: '{}'}]);
+  });
+});

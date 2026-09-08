@@ -77,6 +77,8 @@ export interface ZenodoCreateRecordInput {
   readonly onPreparedDraft?: (draft: ZenodoPreparedDraft) => Promise<void>;
 }
 
+export type ZenodoPrepareEmptyDraftInput = Pick<ZenodoCreateRecordInput, 'token' | 'onPreparedDraft'>;
+
 export interface ZenodoAdoptLegacyDepositionInput extends ZenodoCreateRecordInput {
   readonly depositionId: string;
 }
@@ -267,10 +269,13 @@ export class ZenodoApiClient {
     await this.deleteUnpublishedDeposition(input.token, input.draft.depositionId);
   }
 
+  async prepareEmptyDraft(input: ZenodoPrepareEmptyDraftInput): Promise<ZenodoPreparedDraft> {
+    return toPreparedDraft(await this.createEmptyDeposition(input.token, input.onPreparedDraft));
+  }
+
   async prepareCreateRecord(input: ZenodoCreateRecordInput): Promise<ZenodoPreparedDraft> {
-    const deposition = await this.createEmptyDeposition(input.token);
+    const deposition = await this.createEmptyDeposition(input.token, input.onPreparedDraft);
     const draft = toPreparedDraft(deposition);
-    await this.notifyPreparedDraft(draft, input.onPreparedDraft, () => this.deleteUnpublishedDeposition(input.token, deposition.id));
     await this.uploadFilesToBucket(input.token, deposition, input.files);
     const payloads = buildDepositionPayloads(deposition, input);
     await this.updateDepositionMetadata(input.token, deposition.id, payloads.wire);
@@ -382,13 +387,15 @@ export class ZenodoApiClient {
     }
   }
 
-  private async createEmptyDeposition(token: string): Promise<ZenodoDeposition> {
+  private async createEmptyDeposition(token: string, onPreparedDraft?: ZenodoPrepareEmptyDraftInput['onPreparedDraft']): Promise<ZenodoDeposition> {
     const response = await this.request(`${this.endpoint}/api/deposit/depositions`, {
       method: 'POST',
       headers: jsonHeaders(token),
       body: '{}'
     });
-    return parseDeposition(await response.json());
+    const deposition = parseDeposition(await response.json());
+    await this.notifyPreparedDraft(toPreparedDraft(deposition), onPreparedDraft, () => this.deleteUnpublishedDeposition(token, deposition.id));
+    return deposition;
   }
 
   private async getDeposition(token: string, depositionId: string): Promise<ZenodoDeposition> {
