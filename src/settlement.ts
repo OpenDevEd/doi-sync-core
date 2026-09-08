@@ -65,6 +65,7 @@ export interface ProviderSyncStatePatch {
 		readonly consumedFileCorrectionApprovalIds?: readonly string[];
 		readonly lastSuccess?: NonNullable<ProviderSyncState['zenodo']>['lastSuccess'];
 		readonly identifiers?: ZenodoProviderIdentifiers;
+		readonly unpublishedDraft?: NonNullable<ProviderSyncState['zenodo']>['unpublishedDraft'] | null;
 		readonly orphanDraftCleanup?: NonNullable<ProviderSyncState['zenodo']>['orphanDraftCleanup'] | null;
 	};
 	readonly failure?: ProviderSyncState['failure'] | null;
@@ -305,7 +306,7 @@ function settleZenodo(
 			? { consumedFileCorrectionApprovalIds: effectiveConsumedApprovalIds }
 			: {}),
 		...(lastSuccess ? { lastSuccess } : {}),
-		...(identifiers ? { identifiers } : {}),
+		...(identifiers ? { identifiers, unpublishedDraft: null } : {}),
 		...(orphanDraftCleanup === undefined ? {} : { orphanDraftCleanup })
 	};
 }

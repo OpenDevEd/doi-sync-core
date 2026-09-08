@@ -45,6 +45,7 @@ export interface ZenodoProviderSyncState {
     readonly fileManifestSnapshot?: JsonValue;
   };
   readonly identifiers?: ZenodoProviderIdentifiers;
+  readonly unpublishedDraft?: { readonly depositionId: string };
   readonly orphanDraftCleanup?: {
     readonly depositionId: string;
   };
@@ -110,6 +111,7 @@ const zenodoProviderSyncStateSchema = z.object({
     versionDoi: z.string().min(1).optional(),
     conceptDoi: z.string().min(1).optional()
   }).strict().optional(),
+  unpublishedDraft: z.object({depositionId: z.string().min(1)}).strict().optional(),
   orphanDraftCleanup: z.object({
     depositionId: z.string().min(1)
   }).strict().optional(),

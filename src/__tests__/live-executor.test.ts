@@ -884,3 +884,25 @@ describe('provider-neutral live executor', () => {
 		}))).not.toMatch(/writeback|zotero/i);
 	});
 });
+
+it('passes the existing draft to preparation and publishes that same record', async () => {
+  const targets = {crossref: {enabled: false as const}, zenodo: {enabled: true as const, environment: 'production' as const, identifierPolicy: 'mint-zenodo' as const}};
+  const initial = plan(targets);
+  if (initial.status !== 'write_required') throw new Error('Expected a publication plan');
+  const continued = planPublicationSync({
+    record: initial.record, files: initial.files, identifiers: initial.identifiers, targets,
+    state: {zenodo: {environment: 'production', identifierPolicy: 'mint-zenodo', unpublishedDraft: {depositionId: '700001'}}}
+  });
+  const provider = zenodo({
+    prepareCreateRecord: vi.fn(async (input) => {
+      if (!input.draftDepositionId) throw new Error('Expected the saved draft');
+      const draft = {depositionId: input.draftDepositionId, draftRecordId: input.draftDepositionId};
+      await input.onPreparedDraft?.(draft);
+      return draft;
+    })
+  });
+  const result = await executeLivePublicationSyncPlan(executionInput(targets, {plan: continued, providers: {zenodo: provider}, zenodoJournal: zenodoJournal()}));
+  expect(provider.prepareCreateRecord).toHaveBeenCalledWith(expect.objectContaining({draftDepositionId: '700001'}));
+  expect(provider.publishDraft).toHaveBeenCalledWith({token: 'sandbox-token', draft: {depositionId: '700001', draftRecordId: '700001'}});
+  expect(result[0]?.status).toBe('succeeded');
+});

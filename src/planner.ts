@@ -62,7 +62,7 @@ export type PublicationSyncOperation =
       readonly payloadHash: string;
       readonly relation?: CrossrefRelation;
     }
-  | { readonly type: 'zenodo_create'; readonly payloadHash: string; readonly fileManifestHash: string }
+  | { readonly type: 'zenodo_create'; readonly draftDepositionId?: string; readonly payloadHash: string; readonly fileManifestHash: string }
   | {
       readonly type: 'zenodo_metadata_update';
       readonly latestRecordId: string;
@@ -423,6 +423,9 @@ function planZenodoPublicationOperations(
     }] };
   }
   if (state?.journal?.status === 'preparing') {
+    if (state.journal.operationType === 'zenodo_create' && state.unpublishedDraft?.depositionId === state.journal.depositionId) {
+      return {operations: [{type: 'zenodo_create', draftDepositionId: state.unpublishedDraft.depositionId, payloadHash: hashes.zenodoPayloadHash, fileManifestHash: hashes.fileManifestHash}]};
+    }
     return { operations: [{
       type: 'zenodo_discard_preparing_draft',
       originalOperationType: state.journal.operationType,
@@ -476,6 +479,7 @@ function planZenodoPublicationOperations(
   if (!state?.identifiers?.latestRecordId) {
     return { operations: [{
       type: 'zenodo_create',
+      ...(state?.unpublishedDraft ? {draftDepositionId: state.unpublishedDraft.depositionId} : {}),
       payloadHash: hashes.zenodoPayloadHash,
       fileManifestHash: hashes.fileManifestHash
     }] };

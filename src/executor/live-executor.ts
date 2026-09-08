@@ -115,6 +115,7 @@ export interface ZenodoWriter {
 		readonly draft: ZenodoPreparedDraft;
 	}) => Promise<void>;
 	readonly prepareCreateRecord: (input: PrepareZenodoBaseInput & {
+        readonly draftDepositionId?: string;
 		readonly files: readonly ZenodoLiveUploadFile[];
 	}) => Promise<ZenodoPreparedDraft>;
 	readonly prepareUpdateRecordMetadata: (input: PrepareZenodoBaseInput & {
@@ -368,6 +369,7 @@ async function executeZenodoOperation(
 	if (operation.type === 'zenodo_create') {
 		return executeJournaledZenodoOperation(input, plan, operation, {
 			prepare: async () => provider.prepareCreateRecord({
+                ...(operation.draftDepositionId ? {draftDepositionId: operation.draftDepositionId} : {}),
 				...zenodoBaseInput(input, plan, onPreparedDraft),
 				files: await readZenodoFiles(plan.files.files, requireFileReader(input))
 			})

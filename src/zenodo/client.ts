@@ -67,6 +67,7 @@ export interface ZenodoUploadFile {
 }
 
 export interface ZenodoCreateRecordInput {
+  readonly draftDepositionId?: string;
   readonly token: string;
   readonly doiPolicy: DoiPolicy;
   readonly metadata: PublicationProviderMetadata;
@@ -76,6 +77,8 @@ export interface ZenodoCreateRecordInput {
   /** Called as soon as Zenodo returns a draft/deposition id, before later mutable steps can fail. */
   readonly onPreparedDraft?: (draft: ZenodoPreparedDraft) => Promise<void>;
 }
+
+export type ZenodoPrepareEmptyDraftInput = Required<Pick<ZenodoCreateRecordInput, 'token' | 'onPreparedDraft'>>;
 
 export interface ZenodoAdoptLegacyDepositionInput extends ZenodoCreateRecordInput {
   readonly depositionId: string;
@@ -267,10 +270,17 @@ export class ZenodoApiClient {
     await this.deleteUnpublishedDeposition(input.token, input.draft.depositionId);
   }
 
+  async prepareEmptyDraft(input: ZenodoPrepareEmptyDraftInput): Promise<ZenodoPreparedDraft> {
+    return toPreparedDraft(await this.createEmptyDeposition(input.token, input.onPreparedDraft));
+  }
+
   async prepareCreateRecord(input: ZenodoCreateRecordInput): Promise<ZenodoPreparedDraft> {
-    const deposition = await this.createEmptyDeposition(input.token);
+    if (input.draftDepositionId) {
+      const existing = await this.getDeposition(input.token, input.draftDepositionId);
+      if (existing) return this.prepareExistingDeposition(input, existing);
+    }
+    const deposition = await this.createEmptyDeposition(input.token, input.onPreparedDraft);
     const draft = toPreparedDraft(deposition);
-    await this.notifyPreparedDraft(draft, input.onPreparedDraft, () => this.deleteUnpublishedDeposition(input.token, deposition.id));
     await this.uploadFilesToBucket(input.token, deposition, input.files);
     const payloads = buildDepositionPayloads(deposition, input);
     await this.updateDepositionMetadata(input.token, deposition.id, payloads.wire);
@@ -279,6 +289,11 @@ export class ZenodoApiClient {
 
   async prepareAdoptLegacyDeposition(input: ZenodoAdoptLegacyDepositionInput): Promise<ZenodoPreparedDraft> {
     const deposition = await this.getDeposition(input.token, input.depositionId);
+    if (!deposition) throw new Error(`Zenodo deposition ${input.depositionId} no longer exists`);
+    return this.prepareExistingDeposition(input, deposition);
+  }
+
+  private async prepareExistingDeposition(input: ZenodoCreateRecordInput, deposition: ZenodoDeposition): Promise<ZenodoPreparedDraft> {
     const draft = toPreparedDraft(deposition);
     await input.onPreparedDraft?.(draft);
     await this.replaceLegacyDepositionFiles(input.token, deposition, input.files);
@@ -382,20 +397,23 @@ export class ZenodoApiClient {
     }
   }
 
-  private async createEmptyDeposition(token: string): Promise<ZenodoDeposition> {
+  private async createEmptyDeposition(token: string, onPreparedDraft?: ZenodoPrepareEmptyDraftInput['onPreparedDraft']): Promise<ZenodoDeposition> {
     const response = await this.request(`${this.endpoint}/api/deposit/depositions`, {
       method: 'POST',
       headers: jsonHeaders(token),
       body: '{}'
     });
-    return parseDeposition(await response.json());
+    const deposition = parseDeposition(await response.json());
+    await this.notifyPreparedDraft(toPreparedDraft(deposition), onPreparedDraft, () => this.deleteUnpublishedDeposition(token, deposition.id));
+    return deposition;
   }
 
-  private async getDeposition(token: string, depositionId: string): Promise<ZenodoDeposition> {
+  private async getDeposition(token: string, depositionId: string): Promise<ZenodoDeposition | null> {
     const response = await this.request(`${this.endpoint}/api/deposit/depositions/${encodeURIComponent(depositionId)}`, {
       method: 'GET',
       headers: authHeaders(token)
-    });
+    }, {allowedStatuses: [404]});
+    if (response.status === 404) return null;
     return parseDeposition(await response.json());
   }
 

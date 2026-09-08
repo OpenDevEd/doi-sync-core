@@ -169,6 +169,7 @@ export type {
 	ZenodoApiClientOptions,
 	ZenodoCreateNewVersionInput,
 	ZenodoCreateRecordInput,
+	ZenodoPrepareEmptyDraftInput,
 	ZenodoFetchLike,
 	ZenodoResponseLike,
 	ZenodoRemoteStateVerification,

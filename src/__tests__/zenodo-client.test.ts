@@ -1587,3 +1587,45 @@ describe('ZenodoApiClient', () => {
     ]);
   });
 });
+
+describe('empty Zenodo draft preparation', () => {
+  it('creates and journals an unpublished draft without metadata or files', async () => {
+    const requests: {url: string; method: string | undefined; body: BodyInit | null | undefined}[] = [];
+    const persisted: unknown[] = [];
+    const client = new ZenodoApiClient({endpoint: 'https://zenodo.org', fetch: (url, init) => {
+      requests.push({url, method: init.method, body: init.body});
+      return Promise.resolve(response(legacyDeposition('700001')));
+    }});
+    const draft = await client.prepareEmptyDraft({token: 'token', onPreparedDraft: value => {persisted.push(value); return Promise.resolve();}});
+    expect(draft.depositionId).toBe('700001');
+    expect(persisted).toEqual([draft]);
+    expect(requests).toEqual([{url: 'https://zenodo.org/api/deposit/depositions', method: 'POST', body: '{}'}]);
+  });
+});
+
+it.each([false, true])('fills and publishes a saved draft; missing=%s', async (missing) => {
+  const calls: string[] = [];
+  const id = missing ? '700002' : '700001';
+  const client = new ZenodoApiClient({endpoint: 'https://sandbox.zenodo.org', fetch: (url, init) => {
+    const path = new URL(url).pathname;
+    calls.push(`${init.method} ${path}`);
+    if (missing && path === '/api/deposit/depositions/700001') return Promise.resolve({...response({}), ok: false, status: 404});
+    if (path === '/api/deposit/depositions' || path === `/api/deposit/depositions/${id}`) {
+      return Promise.resolve(response({...legacyDeposition(id), links: {bucket: 'https://sandbox.zenodo.org/api/files/saved-bucket'}}));
+    }
+    if (path.endsWith('/files')) return Promise.resolve(response([]));
+    if (path.startsWith('/api/files/')) return Promise.resolve(response({key:'report.pdf'}));
+    if (path.endsWith('/actions/publish')) return Promise.resolve(response({record_id:id}));
+    if (path === `/api/records/${id}`) return Promise.resolve(response({id, created: publishedAtIso, parent:{id:'700000',pids:{doi:{identifier:'10.5072/zenodo.700000'}}},pids:{doi:{identifier:`10.5072/zenodo.${id}`}},links:{self_html:`https://sandbox.zenodo.org/records/${id}`}}));
+    throw new Error(`Unexpected request ${init.method} ${path}`);
+  }});
+  const persisted: string[] = [];
+  const draft = await client.prepareCreateRecord({token:'token',draftDepositionId:'700001',doiPolicy:'dual',metadata:{doi:'10.53832/opendeved.1205',itemType:'Report',title:'Approved report',publicationDate:'2026-05-20',abstract:'Approved abstract',creators:[{type:'organizational',name:'OpenDevEd'}],tags:[]},files:[{key:'PDF12345',filename:'report.pdf',contentType:'application/pdf',bytes:new Uint8Array([1,2,3])}],onPreparedDraft: value => {persisted.push(value.depositionId);return Promise.resolve();}});
+  expect(persisted).toEqual([id]);
+  const published = await client.publishDraft({token:'token',draft});
+  expect(published.latestRecordId).toBe(id);
+  expect(calls.filter(call => call === 'POST /api/deposit/depositions')).toHaveLength(missing ? 1 : 0);
+  expect(calls).toContain('GET /api/deposit/depositions/700001');
+  expect(calls).toContain(`PUT /api/deposit/depositions/${id}`);
+  expect(calls).toContain(`POST /api/deposit/depositions/${id}/actions/publish`);
+});
