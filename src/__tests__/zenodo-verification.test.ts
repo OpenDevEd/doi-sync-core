@@ -196,7 +196,7 @@ describe('Zenodo published-state verification', () => {
 			url: 'https://sandbox.zenodo.org/api/deposit/depositions/501',
 			init: {
 				method: 'GET',
-				headers: { Authorization: 'Bearer sandbox-token' }
+				headers: { Accept: 'application/json', 'User-Agent': 'doi-sync-core', Authorization: 'Bearer sandbox-token' }
 			}
 		}]);
 	});
