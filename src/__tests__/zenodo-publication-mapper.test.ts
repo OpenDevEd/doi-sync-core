@@ -14,7 +14,7 @@ describe('Zenodo publication mapper', () => {
 		['impossible date', { publicationDate: '2026-02-30' }, 'publicationDate'],
 		['missing description', { abstract: undefined }, 'abstract'],
 		['missing creators', { creators: [] }, 'creators'],
-		['two-letter language', { language: 'en' }, 'language'],
+		['unknown language', { language: 'zz' }, 'language'],
 		['unknown license', { license: 'made-up-license' }, 'license']
 	] as const)('returns a structured issue for %s', (_label, changes, path) => {
 		const issues = validateZenodoPublicationRecord({ ...record(), ...changes });
@@ -29,6 +29,15 @@ describe('Zenodo publication mapper', () => {
 			identifierPolicy: 'reuse-crossref'
 		})).toMatchObject({ language: 'eng', license: 'cc-by-4.0', doi: '10.53832/opendeved.1' });
 	});
+
+	it.each([['en', 'eng'], ['FR', 'fra'], ['ar', 'ara'], ['deu', 'deu'], ['fre', 'fre']])(
+		'maps %s to Zenodo language %s without changing the source record', (language, expected) => {
+			const source = record({ language });
+			expect(validateZenodoPublicationRecord(source)).toEqual([]);
+			expect(buildZenodoProviderMetadata({ record: source, identifiers: {}, identifierPolicy: 'mint-zenodo' }).language).toBe(expected);
+			expect(source.language).toBe(language);
+		}
+	);
 
 	it('accepts licenses from the complete Zenodo vocabulary snapshot', () => {
 		expect(ZENODO_LICENSE_IDS.size).toBe(444);
