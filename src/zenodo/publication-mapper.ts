@@ -4,7 +4,7 @@ import type {
 	PublicationRecordSnapshot
 } from '../publication/record.js';
 import { zenodoReusedDoi, type ZenodoIdentifierPolicy } from '../publication/targets.js';
-import { ZENODO_LANGUAGE_CODES } from '../publication/languages.js';
+import { normalizeZenodoLanguage } from '../publication/languages.js';
 import { ZENODO_LICENSE_IDS } from './licenses.js';
 import { mapZenodoResourceType } from './resource-mapper.js';
 
@@ -42,10 +42,10 @@ export function validateZenodoPublicationRecord(
 			message: 'Zenodo requires at least one creator'
 		});
 	}
-	if (record.language && !ZENODO_LANGUAGE_CODES.has(record.language.toLowerCase())) {
+	if (record.language && !normalizeZenodoLanguage(record.language)) {
 		issues.push({
 			code: 'INVALID_FIELD_VALUE', path: 'language',
-			message: 'Zenodo language must be an ISO 639-2 or ISO 639-3 three-letter code'
+			message: 'Language must be a supported ISO 639 code'
 		});
 	}
 	if (record.license && !ZENODO_LICENSE_IDS.has(record.license.toLowerCase())) {
@@ -65,13 +65,14 @@ export function buildZenodoProviderMetadata(input: {
 	const issues = validateZenodoPublicationRecord(input.record);
 	if (issues.length > 0) throw new Error(`Zenodo validation failed: ${issues.map((issue) => issue.path).join(', ')}`);
 	const { record } = input;
+	const language = record.language ? normalizeZenodoLanguage(record.language) : undefined;
 	const reusedDoi = zenodoReusedDoi(input.identifierPolicy, input.identifiers);
 	return {
 		itemType: record.itemType,
 		title: record.title,
 		publicationDate: record.publicationDate,
 		...(record.abstract ? { abstract: record.abstract } : {}),
-		...(record.language ? { language: record.language.toLowerCase() } : {}),
+		...(language ? { language } : {}),
 		...(record.publisher ? { publisher: record.publisher } : {}),
 		...(record.institution ? { institution: record.institution } : {}),
 		...(record.rights ? { rights: record.rights } : {}),
