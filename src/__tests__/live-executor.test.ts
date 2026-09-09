@@ -894,7 +894,7 @@ it('passes the existing draft to preparation and publishes that same record', as
     state: {zenodo: {environment: 'production', identifierPolicy: 'mint-zenodo', unpublishedDraft: {depositionId: '700001'}}}
   });
   const provider = zenodo({
-    prepareCreateRecord: vi.fn(async (input) => {
+    prepareCreateRecord: vi.fn(async (input: Parameters<ZenodoWriter["prepareCreateRecord"]>[0]) => {
       if (!input.draftDepositionId) throw new Error('Expected the saved draft');
       const draft = {depositionId: input.draftDepositionId, draftRecordId: input.draftDepositionId};
       await input.onPreparedDraft?.(draft);
