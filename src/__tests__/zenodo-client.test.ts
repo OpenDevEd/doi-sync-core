@@ -170,6 +170,7 @@ describe('ZenodoApiClient', () => {
       init: {
         method: 'GET',
         headers: {
+          'User-Agent': 'doi-sync-core',
           Accept: ZENODO_INVENIORDM_ACCEPT,
           Authorization: 'Bearer redacted'
         }
@@ -253,6 +254,7 @@ describe('ZenodoApiClient', () => {
       init: {
         method: 'GET',
         headers: {
+          'User-Agent': 'doi-sync-core',
           Accept: ZENODO_INVENIORDM_ACCEPT,
           Authorization: 'Bearer zenodo-token'
         }
@@ -309,7 +311,8 @@ describe('ZenodoApiClient', () => {
     expect(calls[0]?.init).toEqual({
       method: 'GET',
       headers: {
-        Accept: ZENODO_INVENIORDM_ACCEPT,
+        'User-Agent': 'doi-sync-core',
+          Accept: ZENODO_INVENIORDM_ACCEPT,
         Authorization: 'Bearer sandbox-token'
       }
     });
@@ -319,6 +322,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      expect(new Headers(init.headers).get('Accept')).toBe('application/json');
       if (url.includes('page=1')) {
         return Promise.resolve(response([
           ...Array.from({ length: 99 }, (_, index) => legacyDeposition(`${500000 + index}`, {
@@ -375,6 +379,8 @@ describe('ZenodoApiClient', () => {
     expect(calls[0]?.init).toEqual({
       method: 'GET',
       headers: {
+        Accept: 'application/json',
+        'User-Agent': 'doi-sync-core',
         Authorization: 'Bearer sandbox-token'
       }
     });
@@ -633,7 +639,8 @@ describe('ZenodoApiClient', () => {
       'GET https://sandbox.zenodo.org/api/records/502440'
     ]);
     expect(calls[4]?.init.headers).toMatchObject({
-      Accept: ZENODO_INVENIORDM_ACCEPT,
+      'User-Agent': 'doi-sync-core',
+          Accept: ZENODO_INVENIORDM_ACCEPT,
       Authorization: 'Bearer sandbox-token'
     });
     expect(calls[2]?.init.body).toBe(JSON.stringify(buildZenodoWritePayload({
@@ -675,6 +682,8 @@ describe('ZenodoApiClient', () => {
       init: {
         method: 'DELETE',
         headers: {
+          Accept: 'application/json',
+          'User-Agent': 'doi-sync-core',
           Authorization: 'Bearer sandbox-token'
         }
       }

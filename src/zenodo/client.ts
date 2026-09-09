@@ -658,7 +658,7 @@ export class ZenodoApiClient {
     options: { readonly allowedStatuses?: readonly number[] } = {}
   ): Promise<ZenodoResponseLike> {
     return this.operationRunner.run('zenodo', async () => {
-      const response = await this.fetch(url, init);
+      const response = await this.fetch(url, { ...init, headers: { 'User-Agent': 'doi-sync-core', ...init.headers } });
       if (response.ok || options.allowedStatuses?.includes(response.status) === true) return response;
       throw new ProviderHttpError({
         provider: 'zenodo',
@@ -721,6 +721,7 @@ function jsonHeadersWithAccept(token: string, accept?: string): HeadersInit {
 
 function authHeaders(token: string): HeadersInit {
   return {
+    Accept: 'application/json',
     Authorization: `Bearer ${token}`
   };
 }
