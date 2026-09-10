@@ -1,19 +1,11 @@
 import type { JsonValue } from '../hash.js';
+import type { ZenodoFileCorrectionApproval } from '../publication/file-corrections.js';
 import type { ZenodoRecordIdentifiers } from './records.js';
-import type { CrossrefEnvironment } from '../crossref/deposit.js';
 
 export type ZenodoProviderEnvironment = 'production' | 'sandbox';
 
-export interface ProviderStateEnvironment {
-  readonly crossrefEnvironment: CrossrefEnvironment;
-  readonly zenodoEnvironment: ZenodoProviderEnvironment;
-}
-
 export type ZenodoPublishJournalOperationType =
   | 'zenodo_create'
-  | 'zenodo_draft_create'
-  | 'zenodo_draft_update'
-  | 'zenodo_legacy_deposition_adopt'
   | 'zenodo_metadata_update'
   | 'zenodo_file_update'
   | 'zenodo_new_version';
@@ -30,10 +22,11 @@ export interface ZenodoPreparedDraft {
 
 export interface RecordZenodoPublishDraftInput {
   readonly recordId: string;
-  readonly environment: ProviderStateEnvironment;
+  readonly environment: ZenodoProviderEnvironment;
   readonly operationType: ZenodoPublishJournalOperationType;
   readonly zenodoPayloadHash: string;
   readonly fileManifestHash?: string;
+  readonly fileCorrectionApproval?: ZenodoFileCorrectionApproval;
   readonly depositionId: string;
   readonly draftRecordId: string;
   readonly parentId?: string;
@@ -43,10 +36,27 @@ export interface RecordZenodoPublishDraftInput {
 
 export interface MarkZenodoPublishDraftPublishedInput {
   readonly recordId: string;
-  readonly environment: ProviderStateEnvironment;
+  readonly environment: ZenodoProviderEnvironment;
   readonly depositionId: string;
   readonly publishedRecordId: string;
   readonly identifiers: ZenodoRecordIdentifiers;
+  readonly orphanDraftCleanup?: {
+    readonly depositionId: string;
+  };
+  readonly observedAt: Date;
+}
+
+export interface ClearZenodoOrphanDraftCleanupInput {
+  readonly recordId: string;
+  readonly environment: ZenodoProviderEnvironment;
+  readonly depositionId: string;
+  readonly observedAt: Date;
+}
+
+export interface ClearZenodoPublishDraftInput {
+  readonly recordId: string;
+  readonly environment: ZenodoProviderEnvironment;
+  readonly depositionId: string;
   readonly observedAt: Date;
 }
 
@@ -62,4 +72,5 @@ export interface ZenodoPublishJournalEntry {
   readonly status: ZenodoPublishJournalStatus;
   readonly publishedRecordId?: string | null;
   readonly identifiers?: JsonValue | null;
+  readonly orphanDraftCleanupDepositionId?: string | null;
 }

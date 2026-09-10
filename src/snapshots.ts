@@ -1,67 +1,75 @@
-import type { FileManifest } from './files.js';
+import type { CrossrefRelation } from './crossref/xml.js';
+import type { CrossrefMappedRecord } from './crossref/record-mapper.js';
 import type { JsonValue } from './hash.js';
 import { sha256Hex } from './hash.js';
 import { toJsonValue } from './json.js';
-import type { CanonicalMetadataSnapshot } from './metadata.js';
-import type { CrossrefRelation } from './crossref/xml.js';
-import { effectiveZenodoDoiPolicy } from './zenodo/doi-policy.js';
-import { buildZenodoWritePayload, type DoiPolicy } from './zenodo/records.js';
+import {
+	buildPublicationFileManifestSnapshot,
+	type PublicationFileManifest
+} from './publication/files.js';
+import type {
+	PublicationIdentifiers,
+	PublicationRecordSnapshot
+} from './publication/record.js';
+import type { ZenodoIdentifierPolicy } from './publication/targets.js';
+import { buildZenodoWritePayload } from './zenodo/records.js';
+import { buildZenodoProviderMetadata } from './zenodo/publication-mapper.js';
 
-export const CROSSREF_PAYLOAD_FORMAT = 'doi-sync-core-crossref-report-paper-1';
+export const CROSSREF_PAYLOAD_FORMAT = 'doi-sync-core-crossref-publication-1';
 
-export interface BuildSyncPayloadSnapshotsInput {
-  readonly metadata: CanonicalMetadataSnapshot;
-  readonly fileManifest: FileManifest;
-  readonly doiPolicy: DoiPolicy;
-  readonly existingZenodoVersionDoi?: string | null | undefined;
-  readonly resourceUrl: string;
-  readonly crossrefRelation?: CrossrefRelation;
-  /** Zotero `zotero://select/...` URL emitted into the legacy Zenodo deposition `related_identifiers` write payload. */
-  readonly zoteroSelectUrl?: string;
+interface ZenodoPayloadSnapshotInput {
+	readonly record: PublicationRecordSnapshot;
+	readonly identifiers: PublicationIdentifiers;
 }
 
-export interface SyncPayloadSnapshots {
-  readonly crossrefPayload: JsonValue;
-  readonly zenodoPayload: JsonValue;
-  readonly fileManifest: JsonValue;
+export interface BuildCrossrefPayloadSnapshotInput {
+	readonly record: CrossrefMappedRecord;
+	readonly relation?: CrossrefRelation;
 }
 
-export function buildSyncPayloadSnapshots(input: BuildSyncPayloadSnapshotsInput): SyncPayloadSnapshots {
-  return {
-    crossrefPayload: toJsonValue({
-      format: CROSSREF_PAYLOAD_FORMAT,
-      metadata: input.metadata,
-      resourceUrl: input.resourceUrl,
-      ...(input.crossrefRelation ? { relation: input.crossrefRelation } : {})
-    }),
-    zenodoPayload: toJsonValue(buildZenodoWritePayload({
-      doiPolicy: effectiveZenodoDoiPolicy({
-        configuredPolicy: input.doiPolicy,
-        crossrefDoi: input.metadata.doi,
-        existingVersionDoi: input.existingZenodoVersionDoi
-      }),
-      metadata: input.metadata,
-      resourceUrl: input.resourceUrl,
-      ...(input.zoteroSelectUrl ? { zoteroSelectUrl: input.zoteroSelectUrl } : {})
-    })),
-    fileManifest: buildFileManifestSnapshot(input.fileManifest)
-  };
+export interface BuildZenodoPayloadSnapshotInput extends ZenodoPayloadSnapshotInput {
+	readonly identifierPolicy: ZenodoIdentifierPolicy;
 }
 
-export function buildFileManifestSnapshot(fileManifest: FileManifest): JsonValue {
-  return toJsonValue({
-    files: fileManifest.files.map((file) => ({
-      zoteroAttachmentKey: file.zoteroAttachmentKey,
-      filename: file.filename,
-      contentType: file.contentType,
-      linkMode: file.linkMode,
-      source: file.source,
-      zoteroMd5: file.zoteroMd5 ?? null,
-      zoteroMtime: file.zoteroMtime ?? null
-    }))
-  });
+export interface PublicationPayloadSnapshots {
+	readonly crossrefPayload?: JsonValue;
+	readonly zenodoPayload?: JsonValue;
+	readonly fileManifest: JsonValue;
 }
 
-export function buildFileManifestHash(fileManifest: FileManifest): string {
-  return sha256Hex(buildFileManifestSnapshot(fileManifest));
+export function buildCrossrefPayloadSnapshot(input: BuildCrossrefPayloadSnapshotInput): JsonValue {
+	return toJsonValue({
+		format: CROSSREF_PAYLOAD_FORMAT,
+		record: input.record,
+		...(input.relation ? { relation: input.relation } : {})
+	});
+}
+
+export function buildZenodoPayloadSnapshot(input: BuildZenodoPayloadSnapshotInput): JsonValue {
+	const payload = buildZenodoWritePayload({
+		doiPolicy: input.identifierPolicy === 'mint-zenodo' ? 'dual' : 'external-crossref',
+		metadata: buildZenodoProviderMetadata({
+			record: input.record,
+			identifiers: input.identifiers,
+			identifierPolicy: input.identifierPolicy
+		}),
+		resourceUrl: input.record.landingUrl
+	});
+	return toJsonValue(payload);
+}
+
+export function buildPublicationPayloadHash(snapshot: JsonValue): string {
+	return sha256Hex(snapshot);
+}
+
+export function buildPublicationPayloadSnapshots(input: {
+	readonly crossref?: BuildCrossrefPayloadSnapshotInput;
+	readonly zenodo?: BuildZenodoPayloadSnapshotInput;
+	readonly files: PublicationFileManifest;
+}): PublicationPayloadSnapshots {
+	return {
+		...(input.crossref ? { crossrefPayload: buildCrossrefPayloadSnapshot(input.crossref) } : {}),
+		...(input.zenodo ? { zenodoPayload: buildZenodoPayloadSnapshot(input.zenodo) } : {}),
+		fileManifest: buildPublicationFileManifestSnapshot(input.files)
+	};
 }

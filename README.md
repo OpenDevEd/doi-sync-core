@@ -1,32 +1,46 @@
 # @opendeved/doi-sync-core
 
-Pure DOI sync logic for Zotero, Crossref, and Zenodo.
-
-This package is intended to replace the reusable parts of the old `zotero-lib`,
-`zenodo-lib`, and `zotzen-lib` packages. It deliberately does not own runtime
-state.
+Provider-neutral Crossref and Zenodo publication planning, execution, and settlement for OpenDevEd services.
 
 ## Boundary
 
-This package owns:
+The core owns:
 
-- Zotero item/file parsing and managed Zotero decorations.
-- Crossref XML, deposit request construction, and Crossref API clients.
-- Zenodo metadata payloads, identifiers, record clients, and version flows.
-- Pure sync planning, payload snapshots, intended diffs, and state settlement.
+- normalized publication records, identifiers, target policies, and SHA-256 file manifests;
+- independent Crossref and Zenodo planning;
+- deterministic provider payload and file snapshots;
+- provider clients, retries, journals, and last-success settlement; and
+- browser-safe DOI display helpers on the `./display` export.
 
-The worker owns:
+Host applications own:
 
-- MEE database reads.
-- Worker DB state storage, leases, and migrations.
-- Clerk organization credential lookup.
-- Cron/CLI execution.
-- Discord notifications.
-- Environment parsing.
+- source adapters such as Zotero, Mendeley, or native database records;
+- canonical records and published-file storage;
+- file byte access through `PublicationFileReader`;
+- durable jobs, leases, state persistence, credentials, scheduling, and UI; and
+- source-system writeback after provider settlement.
+
+The package does not infer source metadata, download from a specific storage provider, or perform source writeback.
+
+## Minimal flow
+
+1. Parse a canonical `PublicationRecordSnapshot`, `PublicationFileManifest`, and `PublicationTargetPolicy`.
+2. Call `planPublicationSync` with the environment-scoped last-success state.
+3. Provide durable `CrossrefSubmissionJournalWriter` and `ZenodoPublishJournalWriter` adapters whose callbacks commit before their promises resolve.
+4. Render `describeDryRun`, or execute a write-required plan with `executeLivePublicationSyncPlan`; provider writes do not proceed past their journal boundary until that durable callback succeeds.
+5. Apply the state patch returned by `settlePublicationSyncState` after execution. Published Zenodo journal identifiers and any orphan-cleanup marker must be exposed in the next `ProviderSyncState` until settlement clears them.
 
 ## Verification
+
+Prerequisites are Node.js 22 or newer and [`uv`](https://docs.astral.sh/uv/getting-started/installation/). The XSD gate uses `uvx` to run the pinned `xmlschema==4.3.2` validator because the official Crossref 5.5 schema requires XSD 1.1.
 
 ```bash
 npm install
 npm run verify
+```
+
+Zenodo license validation uses a generated snapshot of the official Zenodo license vocabulary. Refresh it directly from Zenodo when that vocabulary changes:
+
+```bash
+npm run zenodo:licenses:generate
 ```

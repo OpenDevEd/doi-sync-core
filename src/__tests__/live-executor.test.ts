@@ -1,1945 +1,908 @@
 import { describe, expect, it, vi } from 'vitest';
-import { executeLiveSyncPlan as executeLiveSyncPlanRaw } from '../executor/live-executor.js';
+
+import {
+	executeLivePublicationSyncPlan,
+	type CrossrefDepositor,
+	type ExecuteLivePublicationSyncPlanInput,
+	type ZenodoPublishJournalWriter,
+	type ZenodoWriter
+} from '../executor/live-executor.js';
+import { planPublicationSync } from './plan-fixture.js';
+import type { PublicationFile } from '../publication/files.js';
+import type { PublicationTargetPolicy } from '../publication/targets.js';
 import { ProviderHttpError } from '../resilience/errors.js';
-import type { FileManifestEntry } from '../files.js';
-import type { SyncPlan, DoiSyncRecord } from '../planner.js';
-import type { SyncOperationResult } from '../settlement.js';
-import type { CrossrefSubmissionJournalWriter, CrossrefReportPaperDepositor, ExecuteLiveSyncPlanInput, ProviderExecutionContext, ProviderExecutionCredentials, ZenodoPublishJournalWriter, ZenodoWriter, ZoteroWriter } from '../executor/live-executor.js';
 
-const record: DoiSyncRecord = {
-  id: 'rec-1',
-  zoteroItemKey: 'ABC12345',
-  crossrefDoi: '10.53832/opendeved.1205',
-  doiActivated: true
+const bytes = new Uint8Array([1, 2, 3]);
+const zenodoPublishedAt = new Date('2026-04-20T00:00:00.000Z');
+const file: PublicationFile = {
+	fileKey: 'FILE1234', publicationRevision: 1, filename: 'report.pdf',
+	contentType: 'application/pdf', size: 3,
+	sha256: '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81'
 };
 
-const credentials: ProviderExecutionCredentials = {
-  zoteroGroupId: '123',
-  zoteroApiKey: 'zotero-redacted',
-  zenodoToken: 'zenodo-redacted'
-};
-
-const file: FileManifestEntry = {
-  zoteroAttachmentKey: 'PDF12345',
-  zoteroVersion: 3,
-  filename: 'report.pdf',
-  contentType: 'application/pdf',
-  linkMode: 'imported_file',
-  source: 'zotero',
-  supported: true
-};
-
-const providerStateEnvironment = {
-  crossrefEnvironment: 'test',
-  zenodoEnvironment: 'sandbox'
-} as const;
-
-function executeLiveSyncPlan(
-  input: Omit<ExecuteLiveSyncPlanInput, 'providerStateEnvironment'> & Partial<Pick<ExecuteLiveSyncPlanInput, 'providerStateEnvironment'>>
-): Promise<readonly SyncOperationResult[]> {
-  return executeLiveSyncPlanRaw({
-    providerStateEnvironment,
-    ...input
-  });
+function plan(targets: PublicationTargetPolicy) {
+	return planPublicationSync({
+		record: {
+			recordKey: 'ABC12345', canonicalRevision: 1, itemType: 'Report',
+			title: 'Evidence report', publicationDate: '2026-05-20', abstract: 'Evidence summary',
+			publisher: 'OpenDevEd', creators: [{ type: 'organizational', name: 'OpenDevEd' }], tags: [],
+			landingUrl: 'https://example.org/items/ABC12345', fields: {}
+		},
+		files: { files: [file] },
+		identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+		targets
+	});
 }
 
-describe('executeLiveSyncPlan', () => {
-  it('journals a preparing Zenodo draft if preparation fails after draft allocation', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [
-        { type: 'zenodo_create', payloadHash: 'zenodo-hash', fileManifestHash: 'file-hash' }
-      ],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [file],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const crossref: CrossrefReportPaperDepositor = {
-      submitReportPaper: vi.fn(),
-      verifyReportPaper: vi.fn()
-    };
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(async (input: Parameters<ZenodoWriter['prepareCreateRecord']>[0]) => {
-        await input.onPreparedDraft?.({
-          depositionId: '502440',
-          draftRecordId: '502440',
-          parentId: '502439'
-        });
-        throw new Error('metadata update timeout');
-      }),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn()
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn(() => Promise.resolve())
-    };
-    const zotero: ZoteroWriter = {
-      downloadAttachmentFile: vi.fn(() => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]) })),
-      applyManagedWriteback: vi.fn(),
-      createLinkedUrlAttachment: vi.fn(),
-      patchLinkedUrlAttachment: vi.fn(),
-      deleteItem: vi.fn()
-    };
+function fileCorrectionPlan() {
+	const targets = {
+		crossref: { enabled: false as const },
+		zenodo: {
+			enabled: true as const,
+			environment: 'sandbox' as const,
+			identifierPolicy: 'reuse-crossref' as const
+		}
+	};
+	const current = plan(targets);
+	if (current.status !== 'write_required' || !current.hashes.zenodoPayloadHash) {
+		throw new Error('expected Zenodo baseline');
+	}
+	const approval = {
+		id: 'approval-1', kind: 'minor_correction' as const,
+		recordKey: current.record.recordKey, doi: '10.53832/opendeved.1205',
+		fileManifestHash: current.hashes.fileManifestHash,
+		approvedAt: new Date('2026-05-20T00:00:00.000Z')
+	};
+	const correction = planPublicationSync({
+		observedAt: new Date('2026-05-20T00:00:00.000Z'),
+		record: current.record, files: current.files,
+		identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+		targets,
+		state: {
+			zenodo: {
+				environment: 'sandbox', identifierPolicy: 'reuse-crossref',
+				firstPublishedAt: new Date('2026-04-20T00:00:00.000Z'),
+				lastSuccess: {
+					payloadHash: current.hashes.zenodoPayloadHash,
+					fileManifestHash: 'previous-files'
+				},
+				identifiers: { latestRecordId: '42', parentId: '41' }
+			}
+		},
+		zenodoFileChangeApproval: approval
+	});
+	if (correction.status !== 'write_required') throw new Error('expected file correction plan');
+	return { correction, approval };
+}
 
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref,
-        zenodo,
-        zotero
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'dual',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true
-    })).resolves.toEqual([{
-      type: 'zenodo_create',
-      status: 'failed',
-      failureClass: 'Error',
-      failureSummary: 'metadata update timeout'
-    }]);
+function crossref(overrides: Partial<CrossrefDepositor> = {}): CrossrefDepositor {
+	return {
+		submitPublication: vi.fn(() => Promise.resolve({
+			status: 'succeeded' as const, filename: 'deposit.xml',
+			diagnostic: {
+				status: 'success' as const,
+				batchId: 'batch',
+				recordCount: 1,
+				successCount: 1,
+				failureCount: 0,
+				records: []
+			}
+		})),
+		verifyPublication: vi.fn(() => Promise.resolve({ status: 'matched' as const })),
+		...overrides
+	};
+}
 
-    expect(zenodoJournal.recordZenodoPublishDraft).toHaveBeenCalledWith(expect.objectContaining({
-      recordId: 'rec-1',
-      operationType: 'zenodo_create',
-      zenodoPayloadHash: 'zenodo-hash',
-      fileManifestHash: 'file-hash',
-      depositionId: '502440',
-      draftRecordId: '502440',
-      parentId: '502439',
-      status: 'preparing'
-    }));
-    expect(zenodo.publishDraft).not.toHaveBeenCalled();
-    expect(zenodoJournal.markZenodoPublishDraftPublished).not.toHaveBeenCalled();
+function zenodo(overrides: Partial<ZenodoWriter> = {}): ZenodoWriter {
+	const draft = { depositionId: '42', draftRecordId: '42', parentId: '41' };
+	return {
+		discardPreparedDraft: vi.fn(() => Promise.resolve()),
+		prepareCreateRecord: vi.fn(async (input: Parameters<ZenodoWriter['prepareCreateRecord']>[0]) => {
+			await input.onPreparedDraft?.(draft);
+			return draft;
+		}),
+		prepareUpdateRecordMetadata: vi.fn(() => Promise.resolve(draft)),
+		prepareUpdateRecordFiles: vi.fn(() => Promise.resolve(draft)),
+		prepareNewVersion: vi.fn(() => Promise.resolve(draft)),
+		publishDraft: vi.fn(() => Promise.resolve({
+			latestRecordId: '42', parentId: '41', publishedAt: zenodoPublishedAt, links: {}
+		})),
+		...overrides
+	};
+}
+
+function zenodoJournal() {
+	return {
+		recordZenodoPublishDraft: vi.fn<ZenodoPublishJournalWriter['recordZenodoPublishDraft']>(() => Promise.resolve()),
+		markZenodoPublishDraftPublished: vi.fn<ZenodoPublishJournalWriter['markZenodoPublishDraftPublished']>(() => Promise.resolve()),
+		clearZenodoPublishDraft: vi.fn<ZenodoPublishJournalWriter['clearZenodoPublishDraft']>(() => Promise.resolve()),
+		clearZenodoOrphanDraftCleanup: vi.fn<ZenodoPublishJournalWriter['clearZenodoOrphanDraftCleanup']>(() => Promise.resolve())
+	};
+}
+
+function executionInput(
+	targets: PublicationTargetPolicy,
+	overrides: Partial<ExecuteLivePublicationSyncPlanInput> = {}
+): ExecuteLivePublicationSyncPlanInput {
+	return {
+		plan: plan(targets),
+		credentials: { zenodoToken: 'sandbox-token' },
+		providers: { crossref: crossref(), zenodo: zenodo() },
+		fileReader: { readFile: vi.fn(() => Promise.resolve(bytes)) },
+		crossref: {
+			loginId: 'login', password: 'password',
+			depositorName: 'OpenDevEd', emailAddress: 'doi@example.org', registrant: 'OpenDevEd'
+		},
+		crossrefJournal: { recordCrossrefPendingDeposit: vi.fn(() => Promise.resolve()) },
+		...overrides
+	};
+}
+
+describe('provider-neutral live executor', () => {
+	it('reads host-owned bytes, verifies SHA-256, journals, and publishes Zenodo', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const provider = zenodo();
+		const journal = zenodoJournal();
+		const input = executionInput(targets, {
+			providers: { crossref: crossref(), zenodo: provider },
+			zenodoJournal: journal
+		});
+
+		await expect(executeLivePublicationSyncPlan(input)).resolves.toEqual([{
+			type: 'zenodo_create', status: 'succeeded',
+			zenodoPublishedAt,
+			zenodo: { latestRecordId: '42', parentId: '41' }
+		}]);
+		expect(provider.prepareCreateRecord).toHaveBeenCalledWith(expect.objectContaining({
+			doiPolicy: 'dual',
+			files: [{ key: 'FILE1234', filename: 'report.pdf', contentType: 'application/pdf', bytes }]
+		}));
+		expect(journal.recordZenodoPublishDraft).toHaveBeenCalledWith(expect.objectContaining({
+			recordId: 'ABC12345', environment: 'sandbox', operationType: 'zenodo_create'
+		}));
+		expect(journal.recordZenodoPublishDraft).toHaveBeenNthCalledWith(1, expect.objectContaining({
+			status: 'preparing'
+		}));
+		expect(journal.recordZenodoPublishDraft).toHaveBeenNthCalledWith(2, expect.objectContaining({
+			status: 'ready_to_publish'
+		}));
+		expect(journal.markZenodoPublishDraftPublished).toHaveBeenCalledOnce();
+	});
+
+	it('journals the exact file-correction approval and refuses to publish after day 45', async () => {
+		const { correction, approval } = fileCorrectionPlan();
+		const journal = zenodoJournal();
+		const draft = { depositionId: '42', draftRecordId: '42', parentId: '41' };
+		const provider = zenodo({
+			prepareUpdateRecordFiles: vi.fn(async (
+				request: Parameters<ZenodoWriter['prepareUpdateRecordFiles']>[0]
+			) => {
+				await request.onPreparedDraft?.(draft);
+				return draft;
+			})
+		});
+		const now = vi.fn()
+			.mockReturnValueOnce(new Date('2026-06-03T00:00:00.000Z'))
+			.mockReturnValueOnce(new Date('2026-06-03T00:00:00.000Z'))
+			.mockReturnValueOnce(new Date('2026-06-04T00:00:00.001Z'));
+
+		await expect(executeLivePublicationSyncPlan({
+			plan: correction,
+			credentials: { zenodoToken: 'sandbox-token' },
+			providers: { zenodo: provider },
+			fileReader: { readFile: () => Promise.resolve(bytes) },
+			zenodoJournal: journal,
+			now
+		})).resolves.toEqual([{
+			type: 'zenodo_file_update', status: 'failed',
+			failureClass: 'ZENODO_FILE_CORRECTION_WINDOW_CLOSED',
+			failureSummary: 'The Zenodo file correction was not published before its 45-day deadline'
+		}]);
+
+		expect(journal.recordZenodoPublishDraft).toHaveBeenCalledTimes(2);
+		expect(journal.recordZenodoPublishDraft).toHaveBeenNthCalledWith(
+			1, expect.objectContaining({ status: 'preparing', fileCorrectionApproval: approval })
+		);
+		expect(journal.recordZenodoPublishDraft).toHaveBeenNthCalledWith(
+			2, expect.objectContaining({ status: 'ready_to_publish', fileCorrectionApproval: approval })
+		);
+		expect(provider.publishDraft).not.toHaveBeenCalled();
+		expect(provider.discardPreparedDraft).toHaveBeenCalledOnce();
+		expect(journal.clearZenodoPublishDraft).toHaveBeenCalledOnce();
+	});
+
+	it('rejects bytes that do not match the canonical manifest before provider preparation', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const provider = zenodo();
+		const input = executionInput(targets, {
+			providers: { crossref: crossref(), zenodo: provider },
+			fileReader: { readFile: () => Promise.resolve(new Uint8Array([9, 9, 9])) },
+			zenodoJournal: zenodoJournal()
+		});
+
+		await expect(executeLivePublicationSyncPlan(input)).resolves.toEqual([{
+			type: 'zenodo_create', status: 'failed', failureClass: 'Error',
+			failureSummary: 'Published file FILE1234 SHA-256 does not match its manifest'
+		}]);
+		expect(provider.prepareCreateRecord).not.toHaveBeenCalled();
+	});
+
+	it('rejects bytes whose size differs from the canonical manifest', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: {
+				enabled: true as const,
+				environment: 'sandbox' as const,
+				identifierPolicy: 'mint-zenodo' as const
+			}
+		};
+		const input = executionInput(targets, {
+			fileReader: { readFile: () => Promise.resolve(new Uint8Array([1])) },
+			zenodoJournal: zenodoJournal()
+		});
+
+		await expect(executeLivePublicationSyncPlan(input)).resolves.toEqual([{
+			type: 'zenodo_create', status: 'failed', failureClass: 'Error',
+			failureSummary: 'Published file FILE1234 size does not match its manifest'
+		}]);
+	});
+
+	it('adopts an exact existing Zenodo record only for reuse-crossref collisions', async () => {
+		const targets = {
+			crossref: { enabled: true as const, environment: 'test' as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'reuse-crossref' as const }
+		};
+		const provider = zenodo({
+			prepareCreateRecord: vi.fn(() => Promise.reject(new ProviderHttpError({
+				provider: 'zenodo', status: 400,
+				body: '{"errors":[{"field":"pids.doi","messages":["already exists"]}]}'
+			}))),
+			findRecordByDoi: vi.fn(() => Promise.resolve({
+				status: 'found' as const,
+				record: { kind: 'published_record' as const, identifiers: {
+					latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205',
+					publishedAt: zenodoPublishedAt, links: {}
+				} }
+			}))
+		});
+		const input = executionInput(targets, {
+			providers: { crossref: crossref(), zenodo: provider },
+			zenodoJournal: zenodoJournal()
+		});
+
+		const results = await executeLivePublicationSyncPlan(input);
+		expect(results).toContainEqual({
+			type: 'zenodo_create', status: 'succeeded', zenodoAdoptionOnly: true,
+			zenodoPublishedAt,
+			zenodo: { latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205' }
+		});
+	});
+
+	it('adopts a journaled draft that Zenodo already published when publish answers 404', async () => {
+		// The first run published the draft on Zenodo, then our settlement
+		// failed before the journal was cleared. The retry must not loop on
+		// the 404 forever: the published record keeps the draft's id.
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const base = plan(targets);
+		if (base.status !== 'write_required' || !base.hashes.zenodoPayloadHash) throw new Error('expected Zenodo baseline');
+		const journaled = planPublicationSync({
+			record: base.record, files: base.files, identifiers: {}, targets,
+			state: {
+				zenodo: {
+					environment: 'sandbox', identifierPolicy: 'mint-zenodo',
+					journal: {
+						operationType: 'zenodo_create', depositionId: '42', draftRecordId: '42', parentId: '41',
+						payloadHash: base.hashes.zenodoPayloadHash, fileManifestHash: base.hashes.fileManifestHash,
+						status: 'ready_to_publish'
+					}
+				}
+			}
+		});
+		expect(journaled.status).toBe('write_required');
+		// A class instance: the executor must call the method on the provider,
+		// not detach it, or `this` is lost.
+		class RecordingProvider {
+			readonly calls: unknown[] = [];
+			readPublishedRecord(request: { token: string; recordId: string }) {
+				this.calls.push(request);
+				return Promise.resolve({
+					latestRecordId: '42', parentId: '41', versionDoi: '10.5281/zenodo.42', conceptDoi: '10.5281/zenodo.41',
+					publishedAt: zenodoPublishedAt, links: {}
+				});
+			}
+		}
+		const recording = new RecordingProvider();
+		const provider = Object.assign(recording, zenodo({
+			publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
+				provider: 'zenodo', status: 404, body: '{"status": 404, "message": "Not found."}'
+			})))
+		}));
+		const journal = zenodoJournal();
+		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: journaled,
+			providers: { crossref: crossref(), zenodo: provider },
+			zenodoJournal: journal
+		}));
+
+		expect(recording.calls).toEqual([{ token: 'sandbox-token', recordId: '42' }]);
+		expect(results).toEqual([{
+			type: 'zenodo_publish_journaled_draft', status: 'succeeded', zenodoAdoptionOnly: true,
+			zenodoPublishedAt,
+			zenodo: { latestRecordId: '42', parentId: '41', versionDoi: '10.5281/zenodo.42', conceptDoi: '10.5281/zenodo.41' }
+		}]);
+		expect(journal.markZenodoPublishDraftPublished).toHaveBeenCalledOnce();
+	});
+
+	it('keeps failing when publish answers 404 and no published record exists under the draft id', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const base = plan(targets);
+		if (base.status !== 'write_required' || !base.hashes.zenodoPayloadHash) throw new Error('expected Zenodo baseline');
+		const journaled = planPublicationSync({
+			record: base.record, files: base.files, identifiers: {}, targets,
+			state: { zenodo: { environment: 'sandbox', identifierPolicy: 'mint-zenodo', journal: {
+				operationType: 'zenodo_create', depositionId: '42', draftRecordId: '42', parentId: '41',
+				payloadHash: base.hashes.zenodoPayloadHash, fileManifestHash: base.hashes.fileManifestHash, status: 'ready_to_publish'
+			} } }
+		});
+		const provider = zenodo({
+			publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({ provider: 'zenodo', status: 404, body: '{"status": 404}' }))),
+			readPublishedRecord: vi.fn(() => Promise.resolve(null))
+		});
+		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: journaled,
+			providers: { crossref: crossref(), zenodo: provider },
+			zenodoJournal: zenodoJournal()
+		}));
+		expect(results[0]).toMatchObject({ type: 'zenodo_publish_journaled_draft', status: 'failed', failureClass: 'ProviderHttpError' });
+	});
+
+	it('does not adopt an unchanged published record for a failed metadata update', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const base = plan(targets);
+		if (base.status !== 'write_required' || !base.hashes.zenodoPayloadHash) throw new Error('expected Zenodo baseline');
+		const journaled = planPublicationSync({
+			record: base.record, files: base.files, identifiers: {}, targets,
+			state: { zenodo: {
+				environment: 'sandbox', identifierPolicy: 'mint-zenodo',
+				journal: {
+				operationType: 'zenodo_metadata_update', depositionId: '42', draftRecordId: '42', parentId: '41',
+				payloadHash: base.hashes.zenodoPayloadHash, status: 'ready_to_publish'
+			} } }
+		});
+		const readPublishedRecord = vi.fn(() => Promise.resolve({
+			latestRecordId: '42', parentId: '41', versionDoi: '10.5281/zenodo.42',
+			publishedAt: zenodoPublishedAt, links: {}
+		}));
+		const provider = zenodo({
+			publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({ provider: 'zenodo', status: 404, body: '{"status": 404}' }))),
+			readPublishedRecord
+		});
+		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: journaled,
+			providers: { crossref: crossref(), zenodo: provider },
+			zenodoJournal: zenodoJournal(),
+			now: () => new Date('2026-05-21T00:00:00.000Z')
+		}));
+
+		expect(readPublishedRecord).not.toHaveBeenCalled();
+		expect(results[0]).toMatchObject({
+			type: 'zenodo_publish_journaled_draft',
+			status: 'failed',
+			failureClass: 'ProviderHttpError'
+		});
+	});
+
+	it('journals orphan cleanup before deletion and preserves provider method binding', async () => {
+		const targets = {
+			crossref: { enabled: true as const, environment: 'test' as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'reuse-crossref' as const }
+		};
+		const events: string[] = [];
+		const journal = zenodoJournal();
+		journal.markZenodoPublishDraftPublished.mockImplementation((entry) => {
+			events.push(`journal:${entry.orphanDraftCleanup?.depositionId ?? 'none'}`);
+			return Promise.resolve();
+		});
+		journal.clearZenodoOrphanDraftCleanup.mockImplementation(() => {
+			events.push('journal:cleared');
+			return Promise.resolve();
+		});
+		const base = zenodo({
+			publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
+				provider: 'zenodo', status: 400,
+				body: '{"errors":[{"field":"pids.doi","messages":["already exists"]}]}'
+			}))),
+			findRecordByDoi: vi.fn(() => Promise.resolve({
+				status: 'found' as const,
+				record: { kind: 'published_record' as const, identifiers: {
+					latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205',
+					publishedAt: zenodoPublishedAt, links: {}
+				} }
+			}))
+		});
+		const provider = {
+			...base,
+			bindingMarker: 'bound',
+			deleteUnpublishedDraft(input: { readonly depositionId: string }) {
+				if (this.bindingMarker !== 'bound') throw new Error('provider method lost its binding');
+				events.push(`delete:${input.depositionId}`);
+				return Promise.resolve();
+			}
+		};
+
+		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
+			providers: { crossref: crossref(), zenodo: provider },
+			zenodoJournal: journal
+		}));
+
+		expect(results).toContainEqual({
+			type: 'zenodo_create', status: 'succeeded', zenodoAdoptionOnly: true,
+			zenodoPublishedAt,
+			zenodo: { latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205' },
+			zenodoOrphanDraftCleanup: { status: 'deleted', depositionId: '42' }
+		});
+		expect(events).toEqual(['journal:42', 'delete:42', 'journal:cleared']);
+	});
+
+	it('keeps the orphan marker durable when cleanup fails after adoption', async () => {
+		const targets = {
+			crossref: { enabled: true as const, environment: 'test' as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'reuse-crossref' as const }
+		};
+		const journal = zenodoJournal();
+		const provider = zenodo({
+			publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
+				provider: 'zenodo', status: 400,
+				body: '{"errors":[{"field":"pids.doi","messages":["already exists"]}]}'
+			}))),
+			findRecordByDoi: vi.fn(() => Promise.resolve({
+				status: 'found' as const,
+				record: { kind: 'published_record' as const, identifiers: {
+					latestRecordId: '50', parentId: '49', versionDoi: '10.53832/opendeved.1205',
+					publishedAt: zenodoPublishedAt, links: {}
+				} }
+			})),
+			deleteUnpublishedDraft: vi.fn(() => Promise.reject(new Error('cleanup unavailable')))
+		});
+
+		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
+			providers: { crossref: crossref(), zenodo: provider }, zenodoJournal: journal
+		}));
+
+		expect(journal.markZenodoPublishDraftPublished).toHaveBeenCalledWith(expect.objectContaining({
+			orphanDraftCleanup: { depositionId: '42' }
+		}));
+		expect(journal.clearZenodoOrphanDraftCleanup).not.toHaveBeenCalled();
+		const result = results.find(({ type }) => type === 'zenodo_create');
+		expect(result?.status).toBe('succeeded');
+		if (result?.status !== 'succeeded') throw new Error('expected successful Zenodo adoption');
+		expect(result.zenodoOrphanDraftCleanup).toMatchObject({ status: 'failed', depositionId: '42' });
+	});
+
+	it('retries a durably recorded orphaned Zenodo draft deletion', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const cleanup = vi.fn(() => Promise.resolve());
+		const journal = zenodoJournal();
+		const cleanupPlan = planPublicationSync({
+			record: {
+				recordKey: 'ABC12345', canonicalRevision: 1, itemType: 'Report', title: 'Evidence report',
+				publicationDate: '2026-05-20', abstract: 'Evidence summary', publisher: 'OpenDevEd',
+				creators: [{ type: 'organizational', name: 'OpenDevEd' }], tags: [],
+				landingUrl: 'https://example.org/items/ABC12345', fields: {}
+			},
+			files: { files: [] }, identifiers: {}, targets,
+			state: {
+				zenodo: {
+					environment: 'sandbox', identifierPolicy: 'mint-zenodo',
+					orphanDraftCleanup: { depositionId: 'orphan-42' }
+				}
+			}
+		});
+
+		await expect(executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: cleanupPlan,
+			providers: { zenodo: zenodo({ deleteUnpublishedDraft: cleanup }) },
+			zenodoJournal: journal
+		}))).resolves.toEqual([{ type: 'zenodo_cleanup_orphan_draft', status: 'succeeded' }]);
+		expect(cleanup).toHaveBeenCalledWith({ token: 'sandbox-token', depositionId: 'orphan-42' });
+		expect(journal.clearZenodoOrphanDraftCleanup).toHaveBeenCalledWith(expect.objectContaining({
+			recordId: 'ABC12345', environment: 'sandbox', depositionId: 'orphan-42'
+		}));
+	});
+
+	it('refuses orphan cleanup without durable journal storage', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const cleanup = vi.fn(() => Promise.resolve());
+		const base = plan(targets);
+		if (!('record' in base)) throw new Error('expected valid plan fixture');
+		const cleanupPlan = planPublicationSync({
+			record: base.record,
+			files: { files: [] }, identifiers: {}, targets,
+			state: { zenodo: {
+				environment: 'sandbox', identifierPolicy: 'mint-zenodo',
+				orphanDraftCleanup: { depositionId: 'orphan-42' }
+			} }
+		});
+
+		await expect(executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: cleanupPlan,
+			providers: { zenodo: zenodo({ deleteUnpublishedDraft: cleanup }) }
+		}))).resolves.toEqual([{
+			type: 'zenodo_cleanup_orphan_draft', status: 'failed', failureClass: 'ZENODO_JOURNAL_REQUIRED',
+			failureSummary: 'Cannot delete an orphaned Zenodo draft without journal storage'
+		}]);
+		expect(cleanup).not.toHaveBeenCalled();
+	});
+
+	it('executes the normalized DOI that was hashed into the Zenodo plan', async () => {
+		const targets = {
+			crossref: { enabled: true as const, environment: 'test' as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'reuse-crossref' as const }
+		};
+		const base = plan(targets);
+		if (!('record' in base)) throw new Error('expected valid plan fixture');
+		const normalizedPlan = planPublicationSync({
+			record: base.record,
+			files: base.files,
+			identifiers: { managedCrossrefDoi: 'https://doi.org/10.53832/OpenDevEd.1205' },
+			targets
+		});
+		let executedDoi: string | undefined;
+		const provider = zenodo({
+			prepareCreateRecord: vi.fn(async (input: Parameters<ZenodoWriter['prepareCreateRecord']>[0]) => {
+				executedDoi = input.metadata.doi;
+				const draft = { depositionId: '42', draftRecordId: '42', parentId: '41' };
+				await input.onPreparedDraft?.(draft);
+				return draft;
+			})
+		});
+
+		await executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: normalizedPlan, providers: { crossref: crossref(), zenodo: provider },
+			zenodoJournal: zenodoJournal()
+		}));
+
+		expect(provider.prepareCreateRecord).toHaveBeenCalledOnce();
+		expect(executedDoi).toBe('10.53832/opendeved.1205');
+	});
+
+	it('journals accepted Crossref submission before returning pending', async () => {
+		const targets = {
+			crossref: { enabled: true as const, environment: 'test' as const },
+			zenodo: { enabled: false as const }
+		};
+		const journal = { recordCrossrefPendingDeposit: vi.fn(() => Promise.resolve()) };
+		const depositor = crossref({
+			submitPublication: vi.fn(async (request: Parameters<CrossrefDepositor['submitPublication']>[0]) => {
+				await request.onSubmitted?.();
+				return { status: 'pending' as const, filename: request.filename };
+			})
+		});
+		const input = executionInput(targets, {
+			providers: { crossref: depositor, zenodo: zenodo() },
+			crossrefJournal: journal
+		});
+
+		await expect(executeLivePublicationSyncPlan(input)).resolves.toEqual([
+			expect.objectContaining({ type: 'crossref_redeposit', status: 'pending' })
+		]);
+		const payloadHash = input.plan.status === 'write_required'
+			? input.plan.hashes.crossrefPayloadHash
+			: undefined;
+		expect(journal.recordCrossrefPendingDeposit).toHaveBeenCalledWith(expect.objectContaining({
+			recordId: 'ABC12345', environment: 'test', stage: 'deposit', payloadHash
+		}));
+	});
+
+	it('persists a pending relation-clear stage without submitting the desired Crossref payload', async () => {
+		const targets = {
+			crossref: { enabled: true as const, environment: 'test' as const },
+			zenodo: { enabled: false as const }
+		};
+		const base = plan(targets);
+		if (base.status !== 'write_required') throw new Error('expected Crossref plan');
+		const clearPlan = {
+			...base,
+			operations: base.operations.map((operation) => operation.type === 'crossref_redeposit'
+				? { ...operation, clearRelations: true as const }
+				: operation)
+		};
+		const journal = { recordCrossrefPendingDeposit: vi.fn(() => Promise.resolve()) };
+		const provider = crossref({
+			submitPublication: vi.fn(async (request: Parameters<CrossrefDepositor['submitPublication']>[0]) => {
+				await request.onSubmitted?.();
+				return { status: 'pending' as const, filename: 'clear.xml' };
+			})
+		});
+
+		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: clearPlan,
+			providers: { crossref: provider },
+			crossrefJournal: journal
+		}));
+
+		expect(results).toHaveLength(1);
+		const [result] = results;
+		expect(result).toMatchObject({ type: 'crossref_redeposit', status: 'pending' });
+		expect(result?.status === 'pending' ? result.crossref.stage : undefined).toBe('relation_clear');
+		expect(provider.submitPublication).toHaveBeenCalledTimes(1);
+		expect(provider.submitPublication).toHaveBeenCalledWith(expect.objectContaining({
+			relation: 'delete-all'
+		}));
+		expect(journal.recordCrossrefPendingDeposit).toHaveBeenCalledWith(expect.objectContaining({
+			stage: 'relation_clear'
+		}));
+	});
+
+	it('submits the desired Crossref payload only after a pending relation clear verifies', async () => {
+		const targets = {
+			crossref: { enabled: true as const, environment: 'test' as const },
+			zenodo: { enabled: false as const }
+		};
+		const base = plan(targets);
+		if (base.status !== 'write_required' || !base.hashes.crossrefPayloadHash) {
+			throw new Error('expected Crossref plan');
+		}
+		const resumedPlan = planPublicationSync({
+			record: base.record,
+			files: base.files,
+			identifiers: base.identifiers,
+			targets,
+			state: {
+				crossref: {
+					environment: 'test',
+					pending: {
+						stage: 'relation_clear', payloadHash: base.hashes.crossrefPayloadHash,
+						batchId: 'clear-1', filename: 'clear-1.xml'
+					}
+				}
+			}
+		});
+		const provider = crossref();
+
+		await expect(executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: resumedPlan,
+			providers: { crossref: provider }
+		}))).resolves.toEqual([{ type: 'crossref_verify_pending', status: 'succeeded' }]);
+
+		expect(provider.verifyPublication).toHaveBeenCalledWith(expect.objectContaining({
+			relation: 'delete-all'
+		}));
+		const desiredSubmission = vi.mocked(provider.submitPublication).mock.calls[0]?.[0];
+		expect(desiredSubmission?.relation).toBeUndefined();
+	});
+
+	it('executes Crossref-only plans without Zenodo dependencies', async () => {
+		const targets = {
+			crossref: { enabled: true as const, environment: 'test' as const },
+			zenodo: { enabled: false as const }
+		};
+		const input: ExecuteLivePublicationSyncPlanInput = {
+			plan: plan(targets),
+			credentials: {},
+			providers: { crossref: crossref() },
+			crossref: {
+				loginId: 'login', password: 'password', depositorName: 'OpenDevEd',
+				emailAddress: 'doi@example.org', registrant: 'OpenDevEd'
+			},
+			crossrefJournal: { recordCrossrefPendingDeposit: vi.fn(() => Promise.resolve()) }
+		};
+
+		await expect(executeLivePublicationSyncPlan(input)).resolves.toEqual([
+			{ type: 'crossref_redeposit', status: 'succeeded' }
+		]);
+	});
+
+	it('refuses to upload Crossref metadata without durable journal storage', async () => {
+		const targets = {
+			crossref: { enabled: true as const, environment: 'test' as const },
+			zenodo: { enabled: false as const }
+		};
+		const provider = crossref();
+		const input: ExecuteLivePublicationSyncPlanInput = {
+			plan: plan(targets), credentials: {}, providers: { crossref: provider },
+			crossref: {
+				loginId: 'login', password: 'password', depositorName: 'OpenDevEd',
+				emailAddress: 'doi@example.org', registrant: 'OpenDevEd'
+			}
+		};
+
+		await expect(executeLivePublicationSyncPlan(input)).resolves.toEqual([{
+			type: 'crossref_redeposit', status: 'failed', failureClass: 'Error',
+			failureSummary: 'Crossref submission requires durable journal storage'
+		}]);
+		expect(provider.submitPublication).not.toHaveBeenCalled();
+	});
+
+	it('executes Zenodo-only plans without Crossref dependencies', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: {
+				enabled: true as const, environment: 'sandbox' as const,
+				identifierPolicy: 'mint-zenodo' as const
+			}
+		};
+		const input: ExecuteLivePublicationSyncPlanInput = {
+			plan: plan(targets),
+			credentials: { zenodoToken: 'sandbox-token' },
+			providers: { zenodo: zenodo() },
+			fileReader: { readFile: () => Promise.resolve(bytes) },
+			zenodoJournal: zenodoJournal()
+		};
+
+		await expect(executeLivePublicationSyncPlan(input)).resolves.toEqual([{
+			type: 'zenodo_create', status: 'succeeded', zenodoPublishedAt,
+			zenodo: { latestRecordId: '42', parentId: '41' }
+		}]);
+	});
+
+	it('executes Zenodo updates against the record id bound into the plan', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: {
+				enabled: true as const, environment: 'sandbox' as const,
+				identifierPolicy: 'mint-zenodo' as const
+			}
+		};
+		const baseline = plan(targets);
+		if (baseline.status !== 'write_required' || !baseline.hashes.zenodoPayloadHash) {
+			throw new Error('expected Zenodo baseline');
+		}
+		const updatePlan = planPublicationSync({
+			record: { ...baseline.record, title: 'Updated evidence report' },
+			files: baseline.files,
+			identifiers: {},
+			targets,
+			state: {
+				zenodo: {
+					environment: 'sandbox', identifierPolicy: 'mint-zenodo',
+					lastSuccess: {
+						payloadHash: baseline.hashes.zenodoPayloadHash,
+						fileManifestHash: baseline.hashes.fileManifestHash
+					},
+					identifiers: { latestRecordId: 'planned-record', parentId: 'planned-parent' }
+				}
+			}
+		});
+		const provider = zenodo();
+		const input: ExecuteLivePublicationSyncPlanInput = {
+			plan: updatePlan,
+			credentials: { zenodoToken: 'sandbox-token' },
+			providers: { zenodo: provider },
+			zenodoJournal: zenodoJournal()
+		};
+
+		await executeLivePublicationSyncPlan(input);
+
+		expect(provider.prepareUpdateRecordMetadata).toHaveBeenCalledWith(expect.objectContaining({
+			latestRecordId: 'planned-record'
+		}));
+	});
+
+	it('durably marks a draft as preparing before a later preparation failure', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: {
+				enabled: true as const, environment: 'sandbox' as const,
+				identifierPolicy: 'mint-zenodo' as const
+			}
+		};
+		const journal = zenodoJournal();
+		const provider = zenodo({
+			prepareCreateRecord: vi.fn(async (request: Parameters<ZenodoWriter['prepareCreateRecord']>[0]) => {
+				await request.onPreparedDraft?.({ depositionId: '42', draftRecordId: '42' });
+				throw new Error('metadata write failed');
+			})
+		});
+		const input = executionInput(targets, {
+			providers: { zenodo: provider }, zenodoJournal: journal
+		});
+
+		await expect(executeLivePublicationSyncPlan(input)).resolves.toEqual([{
+			type: 'zenodo_create', status: 'failed', failureClass: 'Error',
+			failureSummary: 'metadata write failed'
+		}]);
+		expect(journal.recordZenodoPublishDraft).toHaveBeenCalledTimes(1);
+		expect(journal.recordZenodoPublishDraft).toHaveBeenCalledWith(expect.objectContaining({
+			status: 'preparing'
+		}));
+	});
+
+	it('discards an incomplete prepared draft and clears its durable journal', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: {
+				enabled: true as const, environment: 'sandbox' as const,
+				identifierPolicy: 'mint-zenodo' as const
+			}
+		};
+		const base = plan(targets);
+		if (base.status !== 'write_required') throw new Error('expected Zenodo plan');
+		const recoveryPlan = planPublicationSync({
+			record: base.record,
+			files: base.files,
+			identifiers: base.identifiers,
+			targets,
+			state: {
+				zenodo: {
+					environment: 'sandbox', identifierPolicy: 'mint-zenodo',
+					journal: {
+						operationType: 'zenodo_create', depositionId: 'draft-42',
+						draftRecordId: 'record-42', payloadHash: 'payload',
+						fileManifestHash: 'files', status: 'preparing'
+					}
+				}
+			}
+		});
+		const provider = zenodo();
+		const journal = zenodoJournal();
+
+		await expect(executeLivePublicationSyncPlan({
+			plan: recoveryPlan,
+			credentials: { zenodoToken: 'sandbox-token' },
+			providers: { zenodo: provider },
+			zenodoJournal: journal
+		})).resolves.toEqual([{
+			type: 'zenodo_discard_preparing_draft', status: 'succeeded'
+		}]);
+
+		expect(provider.discardPreparedDraft).toHaveBeenCalledWith({
+			token: 'sandbox-token',
+			operationType: 'zenodo_create',
+			draft: { depositionId: 'draft-42', draftRecordId: 'record-42' }
+		});
+		expect(provider.publishDraft).not.toHaveBeenCalled();
+		expect(journal.clearZenodoPublishDraft).toHaveBeenCalledWith(expect.objectContaining({
+			recordId: 'ABC12345', environment: 'sandbox', depositionId: 'draft-42'
+		}));
+	});
+
+	it('never exposes a source writeback operation', () => {
+		expect(JSON.stringify(plan({
+			crossref: { enabled: true, environment: 'test' }, zenodo: { enabled: false }
+		}))).not.toMatch(/writeback|zotero/i);
+	});
+});
+
+it('passes the existing draft to preparation and publishes that same record', async () => {
+  const targets = {crossref: {enabled: false as const}, zenodo: {enabled: true as const, environment: 'production' as const, identifierPolicy: 'mint-zenodo' as const}};
+  const initial = plan(targets);
+  if (initial.status !== 'write_required') throw new Error('Expected a publication plan');
+  const continued = planPublicationSync({
+    record: initial.record, files: initial.files, identifiers: initial.identifiers, targets,
+    state: {zenodo: {environment: 'production', identifierPolicy: 'mint-zenodo', unpublishedDraft: {depositionId: '700001'}}}
   });
-
-  it('adopts an exact Zenodo DOI search match when create fails because the DOI already exists', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [
-        { type: 'zenodo_create', payloadHash: 'zenodo-hash', fileManifestHash: 'file-hash' }
-      ],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [file],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const crossref: CrossrefReportPaperDepositor = {
-      submitReportPaper: vi.fn(),
-      verifyReportPaper: vi.fn()
-    };
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(() => Promise.reject(new ProviderHttpError({
-        provider: 'zenodo',
-        status: 400,
-        body: '{"errors":[{"field":"pids.doi","messages":["doi:10.53832/opendeved.1205 already exists"]}]}'
-      }))),
-      findRecordByDoi: vi.fn(() => Promise.resolve({
-        status: 'found' as const,
-        record: {
-          kind: 'published_record' as const,
-          identifiers: {
-            latestRecordId: '505547',
-            parentId: '505546',
-            versionDoi: '10.53832/opendeved.1205',
-            links: {
-              selfHtml: 'https://sandbox.zenodo.org/records/505547'
-            }
-          }
-        }
-      })),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn()
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn(() => Promise.resolve())
-    };
-    const zotero: ZoteroWriter = {
-      downloadAttachmentFile: vi.fn(() => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]) })),
-      applyManagedWriteback: vi.fn(),
-      createLinkedUrlAttachment: vi.fn(),
-      patchLinkedUrlAttachment: vi.fn(),
-      deleteItem: vi.fn()
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref,
-        zenodo,
-        zotero
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'external-crossref',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true
-    })).resolves.toEqual([{
-      type: 'zenodo_create',
-      status: 'succeeded',
-      zenodoAdoptionOnly: true,
-      zenodo: {
-        latestRecordId: '505547',
-        parentId: '505546',
-        versionDoi: '10.53832/opendeved.1205'
-      }
-    }]);
-
-    expect(zenodo.findRecordByDoi).toHaveBeenCalledWith({
-      token: 'zenodo-redacted',
-      doi: '10.53832/opendeved.1205'
-    });
-    expect(zenodo.publishDraft).not.toHaveBeenCalled();
-    expect(zenodoJournal.recordZenodoPublishDraft).not.toHaveBeenCalled();
+  const provider = zenodo({
+    prepareCreateRecord: vi.fn(async (input: Parameters<ZenodoWriter["prepareCreateRecord"]>[0]) => {
+      if (!input.draftDepositionId) throw new Error('Expected the saved draft');
+      const draft = {depositionId: input.draftDepositionId, draftRecordId: input.draftDepositionId};
+      await input.onPreparedDraft?.(draft);
+      return draft;
+    })
   });
-
-  it('deletes the worker-created draft when a same-run Zenodo create publish collides and adopts an existing DOI', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [
-        { type: 'zenodo_create', payloadHash: 'zenodo-hash', fileManifestHash: 'file-hash' }
-      ],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [file],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const zenodoIdentifiers = {
-      latestRecordId: '504607',
-      parentId: '504606',
-      versionDoi: '10.53832/opendeved.1205',
-      links: {}
-    } as const;
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(() => Promise.resolve({
-        depositionId: '505638',
-        draftRecordId: '505638',
-        parentId: '505637'
-      })),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
-        provider: 'zenodo',
-        status: 400,
-        body: '{"errors":[{"field":"pids.doi","messages":["doi:10.53832/opendeved.1205 already exists"]}]}'
-      }))),
-      deleteUnpublishedDraft: vi.fn(() => Promise.resolve()),
-      findRecordByDoi: vi.fn(() => Promise.resolve({
-        status: 'found' as const,
-        record: {
-          kind: 'published_record' as const,
-          identifiers: zenodoIdentifiers
-        }
-      }))
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn(() => Promise.resolve())
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref: {
-          submitReportPaper: vi.fn(),
-          verifyReportPaper: vi.fn()
-        },
-        zenodo,
-        zotero: {
-          downloadAttachmentFile: vi.fn(() => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]) })),
-          applyManagedWriteback: vi.fn(),
-          createLinkedUrlAttachment: vi.fn(),
-          patchLinkedUrlAttachment: vi.fn(),
-          deleteItem: vi.fn()
-        }
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'external-crossref',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true,
-      now: () => new Date('2026-05-21T00:00:00.000Z')
-    })).resolves.toEqual([{
-      type: 'zenodo_create',
-      status: 'succeeded',
-      zenodoAdoptionOnly: true,
-      zenodo: {
-        latestRecordId: '504607',
-        parentId: '504606',
-        versionDoi: '10.53832/opendeved.1205'
-      },
-      zenodoOrphanDraftCleanup: {
-        status: 'deleted',
-        depositionId: '505638'
-      }
-    }]);
-
-    expect(zenodo.deleteUnpublishedDraft).toHaveBeenCalledWith({
-      token: 'zenodo-redacted',
-      depositionId: '505638'
-    });
-    expect(zenodoJournal.markZenodoPublishDraftPublished).toHaveBeenCalledWith({
-      recordId: 'rec-1',
-      environment: providerStateEnvironment,
-      depositionId: '505638',
-      publishedRecordId: '504607',
-      identifiers: zenodoIdentifiers,
-      observedAt: new Date('2026-05-21T00:00:00.000Z')
-    });
-  });
-
-  it('returns a stable unresolved DOI-collision failure when Zenodo create collides and exact DOI lookup misses', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [
-        { type: 'zenodo_create', payloadHash: 'zenodo-hash', fileManifestHash: 'file-hash' }
-      ],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [file],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(() => Promise.reject(new ProviderHttpError({
-        provider: 'zenodo',
-        status: 400,
-        body: '{"errors":[{"field":"pids.doi","messages":["doi:10.53832/opendeved.1205 already exists"]}]}'
-      }))),
-      findRecordByDoi: vi.fn(() => Promise.resolve({ status: 'not_found' as const })),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn()
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref: {
-          submitReportPaper: vi.fn(),
-          verifyReportPaper: vi.fn()
-        },
-        zenodo,
-        zotero: {
-          downloadAttachmentFile: vi.fn(() => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]) })),
-          applyManagedWriteback: vi.fn(),
-          createLinkedUrlAttachment: vi.fn(),
-          patchLinkedUrlAttachment: vi.fn(),
-          deleteItem: vi.fn()
-        }
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal: {
-        recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-        markZenodoPublishDraftPublished: vi.fn(() => Promise.resolve())
-      },
-      doiPolicy: 'external-crossref',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true
-    })).resolves.toEqual([{
-      type: 'zenodo_create',
-      status: 'failed',
-      failureClass: 'ZENODO_DOI_ALREADY_EXISTS_UNRESOLVED',
-      failureSummary: 'Zenodo says DOI 10.53832/opendeved.1205 already exists, but exact DOI lookup found no published record'
-    }]);
-  });
-
-  it('does not prepare publishable Zenodo drafts without journal storage', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [
-        { type: 'zenodo_create', payloadHash: 'zenodo-hash', fileManifestHash: 'file-hash' }
-      ],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [file],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const crossref: CrossrefReportPaperDepositor = {
-      submitReportPaper: vi.fn(),
-      verifyReportPaper: vi.fn()
-    };
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn()
-    };
-    const zotero: ZoteroWriter = {
-      downloadAttachmentFile: vi.fn(() => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]) })),
-      applyManagedWriteback: vi.fn(),
-      createLinkedUrlAttachment: vi.fn(),
-      patchLinkedUrlAttachment: vi.fn(),
-      deleteItem: vi.fn()
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref,
-        zenodo,
-        zotero
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      doiPolicy: 'dual',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true
-    })).resolves.toEqual([{
-      type: 'zenodo_create',
-      status: 'failed',
-      failureClass: 'ZENODO_JOURNAL_REQUIRED',
-      failureSummary: 'Cannot publish a Zenodo draft without journal storage'
-    }]);
-
-    expect(zotero.downloadAttachmentFile).not.toHaveBeenCalled();
-    expect(zenodo.prepareCreateRecord).not.toHaveBeenCalled();
-    expect(zenodo.publishDraft).not.toHaveBeenCalled();
-  });
-
-  it('executes independent provider operations and downloads Zenodo files from Zotero only', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [
-        {
-          type: 'crossref_redeposit',
-          payloadHash: 'crossref-hash',
-          relation: {
-            type: 'isSupplementedBy',
-            identifierType: 'doi',
-            identifier: '10.5072/zenodo.502440',
-            description: 'Archived file package'
-          }
-        },
-        { type: 'zenodo_create', payloadHash: 'zenodo-hash', fileManifestHash: 'file-hash' },
-        { type: 'zotero_writeback' }
-      ],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [file],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const successfulCrossrefSubmission = {
-      status: 'succeeded',
-      filename: 'crossref.xml',
-      diagnostic: {
-        status: 'success',
-        recordCount: 1,
-        successCount: 1,
-        failureCount: 0
-      }
-    } as const;
-    const acceptedCrossrefSubmissionWithPendingXml = {
-      status: 'pending',
-      filename: 'delete-relations.xml',
-      diagnostic: {
-        status: 'success',
-        recordCount: 1,
-        successCount: 1,
-        failureCount: 0
-      },
-      xmlVerification: {
-        status: 'pending',
-        reason: 'Crossref XML API metadata has not caught up'
-      }
-    } as const;
-    const crossref: CrossrefReportPaperDepositor = {
-      submitReportPaper: vi.fn()
-        .mockResolvedValueOnce(acceptedCrossrefSubmissionWithPendingXml)
-        .mockResolvedValue(successfulCrossrefSubmission),
-      verifyReportPaper: vi.fn(() => Promise.resolve({ status: 'matched' } as const))
-    };
-    const zenodoIdentifiers = {
-      latestRecordId: '502440',
-      parentId: '502439',
-      conceptDoi: '10.5072/zenodo.502439',
-      versionDoi: '10.5072/zenodo.502440',
-      links: {}
-    } as const;
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(() => Promise.resolve({
-        depositionId: '502440',
-        draftRecordId: '502440',
-        parentId: '502439'
-      })),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn(() => Promise.resolve(zenodoIdentifiers))
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn(() => Promise.resolve())
-    };
-    const crossrefJournal: CrossrefSubmissionJournalWriter = {
-      recordCrossrefPendingDeposit: vi.fn(() => Promise.resolve())
-    };
-    const zotero: ZoteroWriter = {
-      downloadAttachmentFile: vi.fn(() => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]) })),
-      applyManagedWriteback: vi.fn(() => Promise.resolve()),
-      createLinkedUrlAttachment: vi.fn(),
-      patchLinkedUrlAttachment: vi.fn(),
-      deleteItem: vi.fn(),
-      addTagsToItem: vi.fn(() => Promise.resolve())
-    };
-    const dateMatcher: unknown = expect.any(Date);
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref,
-        zenodo,
-        zotero
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      crossrefJournal,
-      zenodoJournal,
-      doiPolicy: 'dual',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true
-    })).resolves.toEqual([
-      { type: 'crossref_redeposit', status: 'succeeded' },
-      {
-        type: 'zenodo_create',
-        status: 'succeeded',
-        zenodo: {
-          latestRecordId: '502440',
-          parentId: '502439',
-          conceptDoi: '10.5072/zenodo.502439',
-          versionDoi: '10.5072/zenodo.502440'
-        }
-      },
-      { type: 'zotero_writeback', status: 'succeeded' }
-    ]);
-
-    expect(zotero.downloadAttachmentFile).toHaveBeenCalledWith({
-      groupId: '123',
-      apiKey: 'zotero-redacted',
-      attachmentKey: 'PDF12345'
-    });
-    const deleteRelationInput = vi.mocked(crossref.submitReportPaper).mock.calls[0]?.[0];
-    if (!deleteRelationInput) throw new Error('Expected a Crossref relation delete submit call');
-    expect(deleteRelationInput).toMatchObject({
-      batchId: 'doi-sync-rec-1-crossref-hash-delete-relations',
-      filename: 'doi-sync-rec-1-crossref-hash-delete-relations.xml',
-      relation: 'delete-all'
-    });
-    const submitInput = vi.mocked(crossref.submitReportPaper).mock.calls[1]?.[0];
-    if (!submitInput) throw new Error('Expected a Crossref submit call');
-    expect(submitInput.batchId).toBe('doi-sync-rec-1-crossref-hash');
-    expect(submitInput.filename).toBe('doi-sync-rec-1-crossref-hash.xml');
-    expect(submitInput).toMatchObject({
-      relation: {
-        type: 'isSupplementedBy',
-        identifierType: 'doi',
-        identifier: '10.5072/zenodo.502440',
-        description: 'Archived file package'
-      }
-    });
-    await deleteRelationInput.onSubmitted?.();
-    await submitInput.onSubmitted?.();
-    expect(crossrefJournal.recordCrossrefPendingDeposit).toHaveBeenNthCalledWith(1, {
-      recordId: 'rec-1',
-      environment: providerStateEnvironment,
-      payloadHash: 'crossref-hash',
-      batchId: 'doi-sync-rec-1-crossref-hash-delete-relations',
-      filename: 'doi-sync-rec-1-crossref-hash-delete-relations.xml',
-      submittedAt: dateMatcher,
-      pendingReason: 'Crossref submission doi-sync-rec-1-crossref-hash-delete-relations.xml accepted; verification pending'
-    });
-    expect(crossrefJournal.recordCrossrefPendingDeposit).toHaveBeenNthCalledWith(2, {
-      recordId: 'rec-1',
-      environment: providerStateEnvironment,
-      payloadHash: 'crossref-hash',
-      batchId: 'doi-sync-rec-1-crossref-hash',
-      filename: 'doi-sync-rec-1-crossref-hash.xml',
-      submittedAt: dateMatcher,
-      pendingReason: 'Crossref submission doi-sync-rec-1-crossref-hash.xml accepted; verification pending'
-    });
-    expect(zenodo.prepareCreateRecord).toHaveBeenCalledWith(expect.objectContaining({
-      token: 'zenodo-redacted',
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      files: [{
-        key: 'PDF12345',
-        filename: 'report.pdf',
-        contentType: 'application/pdf',
-        bytes: new Uint8Array([1, 2, 3])
-      }]
-    }));
-    expect(zenodoJournal.recordZenodoPublishDraft).toHaveBeenCalledWith({
-      recordId: 'rec-1',
-      environment: providerStateEnvironment,
-      operationType: 'zenodo_create',
-      zenodoPayloadHash: 'zenodo-hash',
-      fileManifestHash: 'file-hash',
-      depositionId: '502440',
-      draftRecordId: '502440',
-      parentId: '502439',
-      observedAt: dateMatcher
-    });
-    expect(zenodo.publishDraft).toHaveBeenCalledWith({
-      token: 'zenodo-redacted',
-      draft: {
-        depositionId: '502440',
-        draftRecordId: '502440',
-        parentId: '502439'
-      }
-    });
-    expect(zenodoJournal.markZenodoPublishDraftPublished).toHaveBeenCalledWith({
-      recordId: 'rec-1',
-      environment: providerStateEnvironment,
-      depositionId: '502440',
-      publishedRecordId: '502440',
-      identifiers: zenodoIdentifiers,
-      observedAt: dateMatcher
-    });
-    expect(zotero.applyManagedWriteback).toHaveBeenCalledWith(expect.objectContaining({
-      identifiers: {
-        crossrefDoi: '10.53832/opendeved.1205',
-        zenodoLatestRecordId: '502440',
-        zenodoParentId: '502439'
-      }
-    }));
-    expect(zotero.createLinkedUrlAttachment).toHaveBeenCalledTimes(3);
-    expect(zotero.createLinkedUrlAttachment).toHaveBeenCalledWith({
-      groupId: '123',
-      apiKey: 'zotero-redacted',
-      parentItemKey: 'ABC12345',
-      title: '🔄View entry on Zenodo (deposit) [ABC12345]',
-      url: 'https://sandbox.zenodo.org/deposit/502440',
-      tags: ['_r:zenodoDeposit', '_r:zotzen']
-    });
-    expect(zotero.createLinkedUrlAttachment).toHaveBeenCalledWith({
-      groupId: '123',
-      apiKey: 'zotero-redacted',
-      parentItemKey: 'ABC12345',
-      title: '🔄View entry on Zenodo (record) [ABC12345]',
-      url: 'https://sandbox.zenodo.org/record/502440',
-      tags: ['_r:zenodoRecord', '_r:zotzen']
-    });
-    expect(zotero.createLinkedUrlAttachment).toHaveBeenCalledWith({
-      groupId: '123',
-      apiKey: 'zotero-redacted',
-      parentItemKey: 'ABC12345',
-      title: '🔄Look up this DOI (once activated) [ABC12345]',
-      url: 'https://doi.org/10.53832/opendeved.1205',
-      tags: ['_r:doi', '_r:crossref', '_r:zotzen']
-    });
-    expect(zotero.addTagsToItem).toHaveBeenCalledWith({
-      groupId: '123',
-      apiKey: 'zotero-redacted',
-      itemKey: 'ABC12345',
-      tags: ['_DOILIVE', '_zenodo:submitted']
-    });
-    expect(zotero.addTagsToItem).toHaveBeenCalledWith({
-      groupId: '123',
-      apiKey: 'zotero-redacted',
-      itemKey: 'PDF12345',
-      tags: ['_DOILIVE', '_zenodo:uploaded']
-    });
-  });
-
-  it('preserves an existing Zenodo/DataCite DOI when live metadata update is configured for external Crossref', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials,
-      syncState: {
-        zenodoLatestRecordId: '20342806',
-        zenodoParentId: '20342805',
-        zenodoConceptDoi: '10.5281/zenodo.20342805',
-        zenodoVersionDoi: '10.5281/zenodo.20342806'
-      }
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [{ type: 'zenodo_metadata_update', payloadHash: 'zenodo-hash' }],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report corrected',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: { files: [], unsupported: [] },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const zenodoIdentifiers = {
-      latestRecordId: '20342806',
-      parentId: '20342805',
-      conceptDoi: '10.5281/zenodo.20342805',
-      versionDoi: '10.5281/zenodo.20342806',
-      links: {}
-    } as const;
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(() => Promise.resolve({
-        depositionId: '20342806',
-        draftRecordId: '20342806',
-        parentId: '20342805'
-      })),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn(() => Promise.resolve(zenodoIdentifiers))
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn(() => Promise.resolve())
-    };
-
-    await executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref: {
-          submitReportPaper: vi.fn(),
-          verifyReportPaper: vi.fn()
-        },
-        zenodo,
-        zotero: {
-          downloadAttachmentFile: vi.fn(),
-          applyManagedWriteback: vi.fn(),
-          createLinkedUrlAttachment: vi.fn(),
-          patchLinkedUrlAttachment: vi.fn(),
-          deleteItem: vi.fn()
-        }
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'external-crossref',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true
-    });
-
-    expect(zenodo.prepareUpdateRecordMetadata).toHaveBeenCalledWith(expect.objectContaining({
-      latestRecordId: '20342806',
-      doiPolicy: 'dual'
-    }));
-  });
-
-  it('publishes a journaled Zenodo draft directly without preparing a second draft', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [{
-        type: 'zenodo_publish_journaled_draft',
-        originalOperationType: 'zenodo_metadata_update',
-        depositionId: '502440',
-        draftRecordId: '502440',
-        payloadHash: 'zenodo-hash'
-      }],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const crossref: CrossrefReportPaperDepositor = {
-      submitReportPaper: vi.fn(),
-      verifyReportPaper: vi.fn()
-    };
-    const zenodoIdentifiers = {
-      latestRecordId: '502440',
-      parentId: '502439',
-      conceptDoi: '10.5072/zenodo.502439',
-      versionDoi: '10.5072/zenodo.502440',
-      links: {}
-    } as const;
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn(() => Promise.resolve(zenodoIdentifiers))
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn(() => Promise.resolve())
-    };
-    const zotero: ZoteroWriter = {
-      downloadAttachmentFile: vi.fn(),
-      applyManagedWriteback: vi.fn(),
-      createLinkedUrlAttachment: vi.fn(),
-      patchLinkedUrlAttachment: vi.fn(),
-      deleteItem: vi.fn()
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref,
-        zenodo,
-        zotero
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'dual',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true,
-      now: () => new Date('2026-05-21T00:00:00.000Z')
-    })).resolves.toEqual([{
-      type: 'zenodo_publish_journaled_draft',
-      status: 'succeeded',
-      zenodo: {
-        latestRecordId: '502440',
-        parentId: '502439',
-        conceptDoi: '10.5072/zenodo.502439',
-        versionDoi: '10.5072/zenodo.502440'
-      }
-    }]);
-
-    expect(zenodo.prepareCreateRecord).not.toHaveBeenCalled();
-    expect(zenodo.prepareAdoptLegacyDeposition).not.toHaveBeenCalled();
-    expect(zenodo.prepareUpdateRecordMetadata).not.toHaveBeenCalled();
-    expect(zenodo.prepareNewVersion).not.toHaveBeenCalled();
-    expect(zenodoJournal.recordZenodoPublishDraft).not.toHaveBeenCalled();
-    expect(zenodo.publishDraft).toHaveBeenCalledWith({
-      token: 'zenodo-redacted',
-      draft: {
-        depositionId: '502440',
-        draftRecordId: '502440'
-      }
-    });
-    expect(zenodoJournal.markZenodoPublishDraftPublished).toHaveBeenCalledWith({
-      recordId: 'rec-1',
-      environment: providerStateEnvironment,
-      depositionId: '502440',
-      publishedRecordId: '502440',
-      identifiers: zenodoIdentifiers,
-      observedAt: new Date('2026-05-21T00:00:00.000Z')
-    });
-  });
-
-  it('adopts an exact DOI match when publishing a journaled Zenodo draft collides with an existing DOI', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [{
-        type: 'zenodo_publish_journaled_draft',
-        originalOperationType: 'zenodo_create',
-        depositionId: '505638',
-        draftRecordId: '505638',
-        parentId: '505637',
-        payloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [file],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const zenodoIdentifiers = {
-      latestRecordId: '504607',
-      parentId: '504606',
-      versionDoi: '10.53832/opendeved.1205',
-      links: {
-        selfHtml: 'https://sandbox.zenodo.org/records/504607'
-      }
-    } as const;
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-	      publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
-	        provider: 'zenodo',
-	        status: 400,
-	        body: '{"errors":[{"field":"pids.doi","messages":["doi:10.53832/opendeved.1205 already exists"]}]}'
-	      }))),
-	      deleteUnpublishedDraft: vi.fn(() => Promise.resolve()),
-	      findRecordByDoi: vi.fn(() => Promise.resolve({
-	        status: 'found' as const,
-	        record: {
-          kind: 'published_record' as const,
-          identifiers: zenodoIdentifiers
-        }
-      }))
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn(() => Promise.resolve())
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref: {
-          submitReportPaper: vi.fn(),
-          verifyReportPaper: vi.fn()
-        },
-        zenodo,
-        zotero: {
-          downloadAttachmentFile: vi.fn(),
-          applyManagedWriteback: vi.fn(),
-          createLinkedUrlAttachment: vi.fn(),
-          patchLinkedUrlAttachment: vi.fn(),
-          deleteItem: vi.fn()
-        }
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'external-crossref',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true,
-      now: () => new Date('2026-05-21T00:00:00.000Z')
-    })).resolves.toEqual([{
-      type: 'zenodo_publish_journaled_draft',
-      status: 'succeeded',
-      zenodoAdoptionOnly: true,
-	      zenodo: {
-	        latestRecordId: '504607',
-	        parentId: '504606',
-	        versionDoi: '10.53832/opendeved.1205'
-	      },
-	      zenodoOrphanDraftCleanup: {
-	        status: 'deleted',
-	        depositionId: '505638'
-	      }
-	    }]);
-
-	    expect(zenodo.findRecordByDoi).toHaveBeenCalledWith({
-	      token: 'zenodo-redacted',
-	      doi: '10.53832/opendeved.1205'
-	    });
-	    expect(zenodo.deleteUnpublishedDraft).toHaveBeenCalledWith({
-	      token: 'zenodo-redacted',
-	      depositionId: '505638'
-	    });
-	    expect(zenodoJournal.markZenodoPublishDraftPublished).toHaveBeenCalledWith({
-	      recordId: 'rec-1',
-	      environment: providerStateEnvironment,
-      depositionId: '505638',
-      publishedRecordId: '504607',
-      identifiers: zenodoIdentifiers,
-      observedAt: new Date('2026-05-21T00:00:00.000Z')
-	    });
-	  });
-
-  it('still adopts an exact DOI match if orphan draft cleanup fails', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [{
-        type: 'zenodo_publish_journaled_draft',
-        originalOperationType: 'zenodo_create',
-        depositionId: '505638',
-        draftRecordId: '505638',
-        payloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [file],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const zenodoIdentifiers = {
-      latestRecordId: '504607',
-      parentId: '504606',
-      versionDoi: '10.53832/opendeved.1205',
-      links: {}
-    } as const;
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn(() => Promise.reject(new ProviderHttpError({
-        provider: 'zenodo',
-        status: 400,
-        body: '{"errors":[{"field":"pids.doi","messages":["doi:10.53832/opendeved.1205 already exists"]}]}'
-      }))),
-      deleteUnpublishedDraft: vi.fn(() => Promise.reject(new Error('delete failed'))),
-      findRecordByDoi: vi.fn(() => Promise.resolve({
-        status: 'found' as const,
-        record: {
-          kind: 'published_record' as const,
-          identifiers: zenodoIdentifiers
-        }
-      }))
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn(() => Promise.resolve())
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref: {
-          submitReportPaper: vi.fn(),
-          verifyReportPaper: vi.fn()
-        },
-        zenodo,
-        zotero: {
-          downloadAttachmentFile: vi.fn(),
-          applyManagedWriteback: vi.fn(),
-          createLinkedUrlAttachment: vi.fn(),
-          patchLinkedUrlAttachment: vi.fn(),
-          deleteItem: vi.fn()
-        }
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'external-crossref',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true,
-      now: () => new Date('2026-05-21T00:00:00.000Z')
-    })).resolves.toEqual([{
-      type: 'zenodo_publish_journaled_draft',
-      status: 'succeeded',
-      zenodoAdoptionOnly: true,
-      zenodo: {
-        latestRecordId: '504607',
-        parentId: '504606',
-        versionDoi: '10.53832/opendeved.1205'
-      },
-      zenodoOrphanDraftCleanup: {
-        status: 'failed',
-        depositionId: '505638',
-        failureClass: 'Error',
-        failureSummary: 'delete failed'
-      }
-    }]);
-
-    expect(zenodoJournal.markZenodoPublishDraftPublished).toHaveBeenCalled();
-  });
-
-  it('skips all Zotero write operations when Zotero writeback is disabled', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [
-        { type: 'zenodo_create', payloadHash: 'zenodo-hash', fileManifestHash: 'file-hash' },
-        { type: 'zotero_writeback' }
-      ],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [file],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const crossref: CrossrefReportPaperDepositor = {
-      submitReportPaper: vi.fn(),
-      verifyReportPaper: vi.fn()
-    };
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(() => Promise.resolve({
-        depositionId: '502440',
-        draftRecordId: '502440',
-        parentId: '502439'
-      })),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn(() => Promise.resolve({
-        latestRecordId: '502440',
-        parentId: '502439',
-        conceptDoi: '10.5072/zenodo.502439',
-        versionDoi: '10.5072/zenodo.502440',
-        links: {}
-      }))
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn(() => Promise.resolve())
-    };
-    const zotero: ZoteroWriter = {
-      downloadAttachmentFile: vi.fn(() => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]) })),
-      applyManagedWriteback: vi.fn(() => Promise.resolve()),
-      createLinkedUrlAttachment: vi.fn(),
-      patchLinkedUrlAttachment: vi.fn(),
-      deleteItem: vi.fn()
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref,
-        zenodo,
-        zotero
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'dual',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: false
-    })).resolves.toEqual([
-      {
-        type: 'zenodo_create',
-        status: 'succeeded',
-        zenodo: {
-          latestRecordId: '502440',
-          parentId: '502439',
-          conceptDoi: '10.5072/zenodo.502439',
-          versionDoi: '10.5072/zenodo.502440'
-        }
-      },
-      {
-        type: 'zotero_writeback',
-        status: 'skipped',
-        reason: 'ZOTERO_WRITEBACK_DISABLED'
-      }
-    ]);
-
-    expect(zotero.downloadAttachmentFile).toHaveBeenCalledTimes(1);
-    expect(zenodo.prepareCreateRecord).toHaveBeenCalledTimes(1);
-    expect(zenodo.publishDraft).toHaveBeenCalledTimes(1);
-    expect(zotero.applyManagedWriteback).not.toHaveBeenCalled();
-    expect(zotero.createLinkedUrlAttachment).not.toHaveBeenCalled();
-  });
-
-  it('reconciles stale managed Zotero identifier links by updating one and deleting duplicates', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [{ type: 'zotero_writeback' }],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const crossref: CrossrefReportPaperDepositor = {
-      submitReportPaper: vi.fn(),
-      verifyReportPaper: vi.fn()
-    };
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn()
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(),
-      markZenodoPublishDraftPublished: vi.fn()
-    };
-    const zotero = {
-      downloadAttachmentFile: vi.fn(),
-      applyManagedWriteback: vi.fn(() => Promise.resolve()),
-      createLinkedUrlAttachment: vi.fn(),
-      patchLinkedUrlAttachment: vi.fn(() => Promise.resolve()),
-      deleteItem: vi.fn(() => Promise.resolve())
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [{
-        key: 'STALEDOI',
-        version: 11,
-        data: {
-          itemType: 'attachment',
-          linkMode: 'linked_url',
-          title: '🔄Look up this DOI (once activated) [OLDKEY12]',
-          url: 'https://doi.org/10.53832/opendeved.9999',
-          tags: [{ tag: '_r:doi' }, { tag: '_r:zotzen' }]
-        }
-      }, {
-        key: 'DUPDOI12',
-        version: 12,
-        data: {
-          itemType: 'attachment',
-          linkMode: 'linked_url',
-          title: '🔄Look up this DOI (once activated) [OLDER999]',
-          url: 'https://doi.org/10.53832/opendeved.9998',
-          tags: [{ tag: '_r:doi' }, { tag: '_r:zotzen' }]
-        }
-      }],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: [
-            'DOI: 10.53832/opendeved.1205',
-            'ZenodoArchiveID: 502440',
-            'ZenodoArchiveConcept: 502439'
-          ].join('\n'),
-          url: 'https://my.educationevidence.io/lib/record/ABC12345'
-        }
-      },
-      providers: {
-        crossref,
-        zenodo,
-        zotero
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'dual',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true
-    })).resolves.toEqual([
-      { type: 'zotero_writeback', status: 'succeeded' }
-    ]);
-
-    expect(zotero.createLinkedUrlAttachment).not.toHaveBeenCalledWith(expect.objectContaining({
-      tags: ['_r:doi', '_r:crossref', '_r:zotzen']
-    }));
-    expect(zotero.patchLinkedUrlAttachment).toHaveBeenCalledWith({
-      groupId: '123',
-      apiKey: 'zotero-redacted',
-      attachmentKey: 'STALEDOI',
-      ifUnmodifiedSinceVersion: 11,
-      patch: {
-        title: '🔄Look up this DOI (once activated) [ABC12345]',
-        url: 'https://doi.org/10.53832/opendeved.1205',
-        tags: [{ tag: '_r:doi' }, { tag: '_r:crossref' }, { tag: '_r:zotzen' }]
-      }
-    });
-    expect(zotero.deleteItem).toHaveBeenCalledWith({
-      groupId: '123',
-      apiKey: 'zotero-redacted',
-      itemKey: 'DUPDOI12',
-      ifUnmodifiedSinceVersion: 12
-    });
-  });
-
-  it('still writes back the Crossref DOI when a Zenodo adoption fails, without creating Zenodo links', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [
-        {
-          type: 'zenodo_legacy_deposition_adopt',
-          depositionId: '502440',
-          payloadHash: 'zenodo-hash',
-          fileManifestHash: 'file-hash'
-        },
-        { type: 'zotero_writeback' }
-      ],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [file],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'file-hash'
-      }
-    };
-    const crossref: CrossrefReportPaperDepositor = {
-      submitReportPaper: vi.fn(),
-      verifyReportPaper: vi.fn()
-    };
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(),
-      prepareAdoptLegacyDeposition: vi.fn(() => Promise.reject(new Error('sandbox Zenodo outage'))),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn()
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(),
-      markZenodoPublishDraftPublished: vi.fn()
-    };
-    const zotero: ZoteroWriter = {
-      downloadAttachmentFile: vi.fn(() => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]) })),
-      applyManagedWriteback: vi.fn(() => Promise.resolve()),
-      createLinkedUrlAttachment: vi.fn(),
-      patchLinkedUrlAttachment: vi.fn(),
-      deleteItem: vi.fn()
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: [
-            'DOI: 10.53832/opendeved.1205',
-            'ZenodoArchiveID: 502440',
-            'ZenodoArchiveConcept: 502439'
-          ].join('\n')
-        }
-      },
-      providers: {
-        crossref,
-        zenodo,
-        zotero
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'dual',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true
-    })).resolves.toEqual([
-      {
-        type: 'zenodo_legacy_deposition_adopt',
-        status: 'failed',
-        failureClass: 'Error',
-        failureSummary: 'sandbox Zenodo outage'
-      },
-      {
-        type: 'zotero_writeback',
-        status: 'succeeded'
-      }
-    ]);
-
-    // The failed Zenodo adoption must NOT block the independent Crossref-DOI writeback...
-    expect(zotero.applyManagedWriteback).toHaveBeenCalledTimes(1);
-    // ...including the Crossref DOI lookup link, which does not depend on Zenodo.
-    expect(zotero.createLinkedUrlAttachment).toHaveBeenCalledTimes(1);
-    expect(zotero.createLinkedUrlAttachment).toHaveBeenCalledWith(expect.objectContaining({
-      url: 'https://doi.org/10.53832/opendeved.1205'
-    }));
-    // No managed Zenodo deposit/record links are created while there are no confirmed Zenodo identifiers.
-    expect(zotero.patchLinkedUrlAttachment).not.toHaveBeenCalled();
-    expect(zotero.deleteItem).not.toHaveBeenCalled();
-  });
-
-  it('creates and journals an unpublished Zenodo draft without publishing when no file is available', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [{ type: 'zenodo_draft_create', payloadHash: 'zenodo-hash' }],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash',
-        fileManifestHash: 'empty-files-hash'
-      }
-    };
-    const crossref: CrossrefReportPaperDepositor = {
-      submitReportPaper: vi.fn(),
-      verifyReportPaper: vi.fn()
-    };
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(() => Promise.resolve({
-        depositionId: '504449',
-        draftRecordId: '504449'
-      })),
-      prepareAdoptLegacyDeposition: vi.fn(),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn()
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn()
-    };
-    const zotero: ZoteroWriter = {
-      downloadAttachmentFile: vi.fn(),
-      applyManagedWriteback: vi.fn(),
-      createLinkedUrlAttachment: vi.fn(),
-      patchLinkedUrlAttachment: vi.fn(),
-      deleteItem: vi.fn()
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref,
-        zenodo,
-        zotero
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'external-crossref',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true
-    })).resolves.toEqual([{ type: 'zenodo_draft_create', status: 'succeeded' }]);
-
-    expect(zenodo.prepareCreateRecord).toHaveBeenCalledWith(expect.objectContaining({
-      token: 'zenodo-redacted',
-      doiPolicy: 'external-crossref',
-      files: []
-    }));
-    expect(zenodo.publishDraft).not.toHaveBeenCalled();
-    expect(zenodoJournal.recordZenodoPublishDraft).toHaveBeenCalledWith(expect.objectContaining({
-      recordId: 'rec-1',
-      operationType: 'zenodo_draft_create',
-      zenodoPayloadHash: 'zenodo-hash',
-      depositionId: '504449',
-      draftRecordId: '504449'
-    }));
-    expect(zenodoJournal.markZenodoPublishDraftPublished).not.toHaveBeenCalled();
-  });
-
-  it('updates and journals an unpublished Zenodo draft without publishing while files are still missing', async () => {
-    const context: ProviderExecutionContext = {
-      record,
-      credentials,
-      syncState: {
-        zenodoLegacyDepositionId: '504449',
-        zenodoLegacyDepositionState: 'unsubmitted'
-      }
-    };
-    const plan: SyncPlan = {
-      status: 'write_required',
-      operations: [{ type: 'zenodo_draft_update', depositionId: '504449', payloadHash: 'zenodo-hash-v2' }],
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'report',
-        title: 'Evidence report corrected',
-        publicationDate: '2026-05-20',
-        creators: [],
-        tags: []
-      },
-      fileManifest: {
-        files: [],
-        unsupported: []
-      },
-      hashes: {
-        crossrefPayloadHash: 'crossref-hash',
-        zenodoPayloadHash: 'zenodo-hash-v2',
-        fileManifestHash: 'empty-files-hash'
-      }
-    };
-    const crossref: CrossrefReportPaperDepositor = {
-      submitReportPaper: vi.fn(),
-      verifyReportPaper: vi.fn()
-    };
-    const zenodo: ZenodoWriter = {
-      prepareCreateRecord: vi.fn(),
-      prepareAdoptLegacyDeposition: vi.fn(() => Promise.resolve({
-        depositionId: '504449',
-        draftRecordId: '504449'
-      })),
-      prepareUpdateRecordMetadata: vi.fn(),
-      prepareUpdateRecordFiles: vi.fn(),
-      prepareNewVersion: vi.fn(),
-      publishDraft: vi.fn()
-    };
-    const zenodoJournal: ZenodoPublishJournalWriter = {
-      recordZenodoPublishDraft: vi.fn(() => Promise.resolve()),
-      markZenodoPublishDraftPublished: vi.fn()
-    };
-    const zotero: ZoteroWriter = {
-      downloadAttachmentFile: vi.fn(),
-      applyManagedWriteback: vi.fn(),
-      createLinkedUrlAttachment: vi.fn(),
-      patchLinkedUrlAttachment: vi.fn(),
-      deleteItem: vi.fn()
-    };
-
-    await expect(executeLiveSyncPlan({
-      context,
-      plan,
-      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
-      zoteroChildren: [],
-      zoteroParent: {
-        key: 'ABC12345',
-        version: 8,
-        data: {
-          itemType: 'report',
-          DOI: '10.53832/opendeved.1205',
-          extra: ''
-        }
-      },
-      providers: {
-        crossref,
-        zenodo,
-        zotero
-      },
-      crossref: {
-        environment: 'test',
-        loginId: 'depositor@example.org:odel',
-        password: 'secret',
-        depositorName: 'OpenDevEd',
-        emailAddress: 'depositor@example.org',
-        registrant: 'Open Development & Education'
-      },
-      zenodoJournal,
-      doiPolicy: 'external-crossref',
-      zenodoBaseUrl: 'https://sandbox.zenodo.org',
-      zoteroWritebackEnabled: true
-    })).resolves.toEqual([{ type: 'zenodo_draft_update', status: 'succeeded' }]);
-
-    expect(zenodo.prepareAdoptLegacyDeposition).toHaveBeenCalledWith(expect.objectContaining({
-      token: 'zenodo-redacted',
-      depositionId: '504449',
-      doiPolicy: 'external-crossref',
-      files: []
-    }));
-    expect(zenodo.publishDraft).not.toHaveBeenCalled();
-    expect(zenodoJournal.recordZenodoPublishDraft).toHaveBeenCalledWith(expect.objectContaining({
-      recordId: 'rec-1',
-      operationType: 'zenodo_draft_update',
-      zenodoPayloadHash: 'zenodo-hash-v2',
-      depositionId: '504449',
-      draftRecordId: '504449'
-    }));
-    expect(zenodoJournal.markZenodoPublishDraftPublished).not.toHaveBeenCalled();
-  });
+  const result = await executeLivePublicationSyncPlan(executionInput(targets, {plan: continued, providers: {zenodo: provider}, zenodoJournal: zenodoJournal()}));
+  expect(provider.prepareCreateRecord).toHaveBeenCalledWith(expect.objectContaining({draftDepositionId: '700001'}));
+  expect(provider.publishDraft).toHaveBeenCalledWith({token: 'sandbox-token', draft: {depositionId: '700001', draftRecordId: '700001'}});
+  expect(result[0]?.status).toBe('succeeded');
 });

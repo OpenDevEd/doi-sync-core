@@ -4,6 +4,9 @@ import { buildZenodoWritePayload, ZENODO_INVENIORDM_ACCEPT } from '../zenodo/rec
 import type { ProviderName } from '../resilience/errors.js';
 import { ResilientProviderOperationRunner, type ProviderOperationRunner } from '../resilience/provider-runner.js';
 
+const publishedAtIso = '2026-04-20T09:30:00.000Z';
+const publishedAt = new Date(publishedAtIso);
+
 function response(body: unknown): ZenodoResponseLike {
   return {
     ok: true,
@@ -77,6 +80,7 @@ function createSuccessfulCreateRecordFetch(): ZenodoFetchLike {
     if (url.endsWith('/api/records/502440')) {
       return Promise.resolve(response({
         id: '502440',
+        created: publishedAtIso,
         parent: {
           id: '502439',
           pids: {
@@ -108,10 +112,11 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: []
@@ -127,6 +132,7 @@ describe('ZenodoApiClient', () => {
       calls.push({ url, init });
       return Promise.resolve(response({
         id: '15043088',
+        created: publishedAtIso,
         parent: {
           id: '15043087',
           pids: {
@@ -151,6 +157,7 @@ describe('ZenodoApiClient', () => {
       identifiers: {
         latestRecordId: '15043088',
         parentId: '15043087',
+        publishedAt,
         conceptDoi: '10.5281/zenodo.15043087',
         versionDoi: '10.5281/zenodo.15043088',
         links: {
@@ -163,6 +170,7 @@ describe('ZenodoApiClient', () => {
       init: {
         method: 'GET',
         headers: {
+          'User-Agent': 'doi-sync-core',
           Accept: ZENODO_INVENIORDM_ACCEPT,
           Authorization: 'Bearer redacted'
         }
@@ -176,6 +184,7 @@ describe('ZenodoApiClient', () => {
       calls.push({ url, init });
       return Promise.resolve(response({
         id: '17585570',
+        created: publishedAtIso,
         parent: {
           id: '17585569',
           pids: {}
@@ -217,6 +226,7 @@ describe('ZenodoApiClient', () => {
     })).resolves.toEqual({
       identifiers: {
         latestRecordId: '17585570',
+        publishedAt,
         parentId: '17585569',
         versionDoi: '10.53832/edtechhub.1152',
         links: {}
@@ -244,6 +254,7 @@ describe('ZenodoApiClient', () => {
       init: {
         method: 'GET',
         headers: {
+          'User-Agent': 'doi-sync-core',
           Accept: ZENODO_INVENIORDM_ACCEPT,
           Authorization: 'Bearer zenodo-token'
         }
@@ -259,6 +270,7 @@ describe('ZenodoApiClient', () => {
         hits: {
           hits: [{
             id: '505547',
+            created: publishedAtIso,
             parent: { id: '505546' },
             pids: { doi: { identifier: '10.53832/opendeved.1205' } },
             links: {
@@ -283,6 +295,7 @@ describe('ZenodoApiClient', () => {
         identifiers: {
           latestRecordId: '505547',
           parentId: '505546',
+          publishedAt,
           versionDoi: '10.53832/opendeved.1205',
           links: {
             selfHtml: 'https://sandbox.zenodo.org/records/505547'
@@ -298,7 +311,8 @@ describe('ZenodoApiClient', () => {
     expect(calls[0]?.init).toEqual({
       method: 'GET',
       headers: {
-        Accept: ZENODO_INVENIORDM_ACCEPT,
+        'User-Agent': 'doi-sync-core',
+          Accept: ZENODO_INVENIORDM_ACCEPT,
         Authorization: 'Bearer sandbox-token'
       }
     });
@@ -308,6 +322,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      expect(new Headers(init.headers).get('Accept')).toBe('application/json');
       if (url.includes('page=1')) {
         return Promise.resolve(response([
           ...Array.from({ length: 99 }, (_, index) => legacyDeposition(`${500000 + index}`, {
@@ -364,6 +379,8 @@ describe('ZenodoApiClient', () => {
     expect(calls[0]?.init).toEqual({
       method: 'GET',
       headers: {
+        Accept: 'application/json',
+        'User-Agent': 'doi-sync-core',
         Authorization: 'Bearer sandbox-token'
       }
     });
@@ -449,6 +466,7 @@ describe('ZenodoApiClient', () => {
       calls.push({ url, init });
       return Promise.resolve(response({
         id: '123',
+        created: publishedAtIso,
         parent: {
           id: '122',
           pids: {
@@ -565,6 +583,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve(response({
           id: '502440',
+          created: publishedAtIso,
           parent: {
             id: '502439',
             pids: {
@@ -592,10 +611,11 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: [{
@@ -619,17 +639,19 @@ describe('ZenodoApiClient', () => {
       'GET https://sandbox.zenodo.org/api/records/502440'
     ]);
     expect(calls[4]?.init.headers).toMatchObject({
-      Accept: ZENODO_INVENIORDM_ACCEPT,
+      'User-Agent': 'doi-sync-core',
+          Accept: ZENODO_INVENIORDM_ACCEPT,
       Authorization: 'Bearer sandbox-token'
     });
     expect(calls[2]?.init.body).toBe(JSON.stringify(buildZenodoWritePayload({
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       }
     })));
@@ -660,10 +682,49 @@ describe('ZenodoApiClient', () => {
       init: {
         method: 'DELETE',
         headers: {
+          Accept: 'application/json',
+          'User-Agent': 'doi-sync-core',
           Authorization: 'Bearer sandbox-token'
         }
       }
     }]);
+  });
+
+  it.each([
+    {
+      name: 'new record', operationType: 'zenodo_create' as const,
+      draft: { depositionId: '501', draftRecordId: '501' },
+      url: 'https://sandbox.zenodo.org/api/deposit/depositions/501', method: 'DELETE'
+    },
+    {
+      name: 'legacy metadata edit', operationType: 'zenodo_metadata_update' as const,
+      draft: { depositionId: '502', draftRecordId: '502' },
+      url: 'https://sandbox.zenodo.org/api/deposit/depositions/502/actions/discard', method: 'POST'
+    },
+    {
+      name: 'Invenio file edit', operationType: 'zenodo_file_update' as const,
+      draft: { depositionId: '503', draftRecordId: 'record-503', api: 'invenio_record' as const },
+      url: 'https://sandbox.zenodo.org/api/records/record-503/draft', method: 'DELETE'
+    }
+  ])('discards an incomplete $name draft through its native API', async ({ operationType, draft, url, method }) => {
+    const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const client = new ZenodoApiClient({
+      endpoint: 'https://sandbox.zenodo.org',
+      fetch: (requestUrl, init) => {
+        calls.push({ url: requestUrl, init });
+        return Promise.resolve({
+          ok: true, status: 204,
+          json: () => Promise.resolve({}), text: () => Promise.resolve('')
+        });
+      }
+    });
+
+    await expect(client.discardPreparedDraft({
+      token: 'sandbox-token', operationType, draft
+    })).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ url, init: { method } });
   });
 
   it('preserves existing legacy deposition metadata when adopting an unsubmitted draft', async () => {
@@ -717,7 +778,7 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report v2',
         publicationDate: '2026-05-21',
         abstract: 'Updated summary',
@@ -735,7 +796,7 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report v2',
         publicationDate: '2026-05-21',
         abstract: 'Updated summary',
@@ -812,10 +873,11 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'external-crossref',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report v2',
         publicationDate: '2026-05-21',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: [{
@@ -858,6 +920,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve(response({
           id: '502440',
+          created: publishedAtIso,
           parent: {
             id: '502439',
             pids: {
@@ -885,10 +948,11 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: [{
@@ -907,10 +971,11 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       }
     }));
@@ -938,6 +1003,52 @@ describe('ZenodoApiClient', () => {
     ]);
   });
 
+  it('writes preserved provider metadata but journals only the managed payload projection', async () => {
+    let writtenPayload: unknown;
+    const client = new ZenodoApiClient({
+      endpoint: 'https://sandbox.zenodo.org',
+      fetch: (url, init) => {
+        if (url.endsWith('/api/deposit/depositions/502440/actions/edit')) {
+          return Promise.resolve(response({
+            id: 502440,
+            record_id: 502440,
+            metadata: {
+              custom_provider_field: 'preserve me',
+              contributors: [{ name: 'Provider editor', type: 'Editor' }]
+            }
+          }));
+        }
+        if (url.endsWith('/api/deposit/depositions/502440') && init.method === 'PUT') {
+          if (typeof init.body !== 'string') throw new Error('expected JSON request body');
+          writtenPayload = JSON.parse(init.body);
+          return Promise.resolve(response({ id: 502440 }));
+        }
+        throw new Error(`unexpected ${init.method ?? 'GET'} ${url}`);
+      }
+    });
+    const metadata = {
+      itemType: 'Report', title: 'Evidence report', publicationDate: '2026-05-20',
+      abstract: 'Evidence summary', institution: 'OpenDevEd',
+      creators: [{ type: 'organizational' as const, name: 'OpenDevEd' }], tags: []
+    };
+
+    const draft = await client.prepareUpdateRecordMetadata({
+      token: 'sandbox-token', latestRecordId: '502440', doiPolicy: 'dual', metadata
+    });
+
+    expect(writtenPayload).toMatchObject({ metadata: {
+      custom_provider_field: 'preserve me',
+      contributors: [
+        { name: 'Provider editor', type: 'Editor' },
+        { name: 'OpenDevEd', type: 'HostingInstitution' }
+      ]
+    } });
+    expect(draft.payloadSnapshot).toEqual(buildZenodoWritePayload({
+      doiPolicy: 'dual', metadata
+    }));
+    expect(draft.payloadSnapshot).not.toHaveProperty('metadata.custom_provider_field');
+  });
+
   it('reconciles a retryable publish failure by reading the published record before retrying publish', async () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
@@ -953,6 +1064,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve(response({
           id: '502440',
+          created: publishedAtIso,
           parent: {
             id: '502439',
             pids: { doi: { identifier: '10.5072/zenodo.502439' } }
@@ -1029,6 +1141,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve(response({
           id: '502440',
+          created: publishedAtIso,
           parent: {
             id: '502439',
             pids: { doi: { identifier: '10.5072/zenodo.502439' } }
@@ -1094,10 +1207,11 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: [{
@@ -1145,10 +1259,11 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: [{
@@ -1223,10 +1338,11 @@ describe('ZenodoApiClient', () => {
         doiPolicy: 'dual',
         metadata: {
           doi: '10.53832/opendeved.1205',
-          itemType: 'report',
+          itemType: 'Report',
           title: 'Evidence report',
           publicationDate: '2026-05-20',
-          creators: [],
+          abstract: 'Evidence summary',
+          creators: [{ type: 'organizational', name: 'OpenDevEd' }],
           tags: []
         },
         files: [{
@@ -1279,6 +1395,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve(response({
           id: '502440',
+          created: publishedAtIso,
           parent: { id: '502439', pids: { doi: { identifier: '10.5072/zenodo.502439' } } },
           pids: { doi: { identifier: '10.5072/zenodo.502440' } },
           links: {}
@@ -1297,10 +1414,11 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: [
@@ -1356,6 +1474,7 @@ describe('ZenodoApiClient', () => {
       if (url.endsWith('/api/records/502441')) {
         return Promise.resolve(response({
           id: '502441',
+          created: publishedAtIso,
           parent: { id: '502439', pids: { doi: { identifier: '10.5072/zenodo.502439' } } },
           pids: { doi: { identifier: '10.5072/zenodo.502441' } },
           links: {}
@@ -1375,10 +1494,11 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report v2',
         publicationDate: '2026-05-21',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: [{
@@ -1453,10 +1573,11 @@ describe('ZenodoApiClient', () => {
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report v2',
         publicationDate: '2026-05-21',
-        creators: [],
+        abstract: 'Evidence summary',
+        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
         tags: []
       },
       files: [{
@@ -1474,4 +1595,46 @@ describe('ZenodoApiClient', () => {
       'PUT https://sandbox.zenodo.org/api/files/bucket-2/report-v2.pdf'
     ]);
   });
+});
+
+describe('empty Zenodo draft preparation', () => {
+  it('creates and journals an unpublished draft without metadata or files', async () => {
+    const requests: {url: string; method: string | undefined; body: BodyInit | null | undefined}[] = [];
+    const persisted: unknown[] = [];
+    const client = new ZenodoApiClient({endpoint: 'https://zenodo.org', fetch: (url, init) => {
+      requests.push({url, method: init.method, body: init.body});
+      return Promise.resolve(response(legacyDeposition('700001')));
+    }});
+    const draft = await client.prepareEmptyDraft({token: 'token', onPreparedDraft: value => {persisted.push(value); return Promise.resolve();}});
+    expect(draft.depositionId).toBe('700001');
+    expect(persisted).toEqual([draft]);
+    expect(requests).toEqual([{url: 'https://zenodo.org/api/deposit/depositions', method: 'POST', body: '{}'}]);
+  });
+});
+
+it.each([false, true])('fills and publishes a saved draft; missing=%s', async (missing) => {
+  const calls: string[] = [];
+  const id = missing ? '700002' : '700001';
+  const client = new ZenodoApiClient({endpoint: 'https://sandbox.zenodo.org', fetch: (url, init) => {
+    const path = new URL(url).pathname;
+    calls.push(`${init.method} ${path}`);
+    if (missing && path === '/api/deposit/depositions/700001') return Promise.resolve({...response({}), ok: false, status: 404});
+    if (path === '/api/deposit/depositions' || path === `/api/deposit/depositions/${id}`) {
+      return Promise.resolve(response({...legacyDeposition(id), links: {bucket: 'https://sandbox.zenodo.org/api/files/saved-bucket'}}));
+    }
+    if (path.endsWith('/files')) return Promise.resolve(response([]));
+    if (path.startsWith('/api/files/')) return Promise.resolve(response({key:'report.pdf'}));
+    if (path.endsWith('/actions/publish')) return Promise.resolve(response({record_id:id}));
+    if (path === `/api/records/${id}`) return Promise.resolve(response({id, created: publishedAtIso, parent:{id:'700000',pids:{doi:{identifier:'10.5072/zenodo.700000'}}},pids:{doi:{identifier:`10.5072/zenodo.${id}`}},links:{self_html:`https://sandbox.zenodo.org/records/${id}`}}));
+    throw new Error(`Unexpected request ${init.method} ${path}`);
+  }});
+  const persisted: string[] = [];
+  const draft = await client.prepareCreateRecord({token:'token',draftDepositionId:'700001',doiPolicy:'dual',metadata:{doi:'10.53832/opendeved.1205',itemType:'Report',title:'Approved report',publicationDate:'2026-05-20',abstract:'Approved abstract',creators:[{type:'organizational',name:'OpenDevEd'}],tags:[]},files:[{key:'PDF12345',filename:'report.pdf',contentType:'application/pdf',bytes:new Uint8Array([1,2,3])}],onPreparedDraft: value => {persisted.push(value.depositionId);return Promise.resolve();}});
+  expect(persisted).toEqual([id]);
+  const published = await client.publishDraft({token:'token',draft});
+  expect(published.latestRecordId).toBe(id);
+  expect(calls.filter(call => call === 'POST /api/deposit/depositions')).toHaveLength(missing ? 1 : 0);
+  expect(calls).toContain('GET /api/deposit/depositions/700001');
+  expect(calls).toContain(`PUT /api/deposit/depositions/${id}`);
+  expect(calls).toContain(`POST /api/deposit/depositions/${id}/actions/publish`);
 });

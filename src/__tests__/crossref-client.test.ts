@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CrossrefApiClient, type CrossrefFetchLike, type CrossrefResponseLike } from '../crossref/client.js';
+import type { CrossrefMappedRecord } from '../crossref/record-mapper.js';
+import type { CrossrefDepositMetadata } from '../publication/record.js';
 import { ResilientProviderOperationRunner } from '../resilience/provider-runner.js';
 
 function textResponse(body: string, status = 200): CrossrefResponseLike {
@@ -7,6 +9,23 @@ function textResponse(body: string, status = 200): CrossrefResponseLike {
     ok: status >= 200 && status < 300,
     status,
     text: () => Promise.resolve(body)
+  };
+}
+
+function publicationInput<const T extends { readonly metadata: CrossrefDepositMetadata; readonly resourceUrl: string }>(
+  input: T
+): Omit<T, 'metadata' | 'resourceUrl'> & { readonly record: CrossrefMappedRecord } {
+  const { metadata, resourceUrl, ...rest } = input;
+  return {
+    ...rest,
+    record: {
+      kind: 'report',
+      metadata,
+      landingUrl: resourceUrl,
+      publisher: metadata.publisher ?? 'Open Development & Education',
+      isbns: [],
+      institution: metadata.institution ?? metadata.publisher ?? 'Open Development & Education'
+    }
   };
 }
 
@@ -34,7 +53,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'test',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -46,9 +65,10 @@ describe('CrossrefApiClient', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
+        publisher: "Open Development & Education",
         creators: [],
         tags: []
       },
@@ -59,8 +79,8 @@ describe('CrossrefApiClient', () => {
         identifier: '10.5281/zenodo.15043088',
         description: 'Archived file package'
       }
-    })).resolves.toMatchObject({
-      status: 'succeeded',
+    }))).resolves.toMatchObject({
+      status: 'pending',
       filename: 'doi-sync-batch-1.xml'
     });
 
@@ -74,7 +94,7 @@ describe('CrossrefApiClient', () => {
     expect(form.get('fname')).toBeInstanceOf(File);
     const file = form.get('fname');
     if (!(file instanceof File)) throw new Error('expected Crossref XML upload file');
-    await expect(file.text()).resolves.toContain('<inter_work_relation relationship-type="isSupplementedBy" identifier-type="doi">10.5281/zenodo.15043088</inter_work_relation>');
+    await expect(file.text()).resolves.toContain('<rel:inter_work_relation relationship-type="isSupplementedBy" identifier-type="doi">10.5281/zenodo.15043088</rel:inter_work_relation>');
 
     expect(calls[1]?.url).toBe('https://test.crossref.org/servlet/submissionDownload');
     expect(calls[1]?.init.method).toBe('POST');
@@ -111,7 +131,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await client.submitReportPaper({
+    await client.submitPublication(publicationInput({
       environment: 'test',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -123,9 +143,10 @@ describe('CrossrefApiClient', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
+        publisher: "Open Development & Education",
         creators: [],
         tags: []
       },
@@ -134,7 +155,7 @@ describe('CrossrefApiClient', () => {
         events.push('journal');
         return Promise.resolve();
       }
-    });
+    }));
 
     expect(events).toEqual(['upload', 'journal', 'poll']);
   });
@@ -244,7 +265,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'test',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -256,15 +277,16 @@ describe('CrossrefApiClient', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
+        publisher: "Open Development & Education",
         creators: [],
         tags: []
       },
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
-    })).resolves.toMatchObject({
-      status: 'succeeded',
+    }))).resolves.toMatchObject({
+      status: 'pending',
       filename: 'doi-sync-batch-1.xml'
     });
     await operationRunner.close();
@@ -295,7 +317,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'test',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -307,14 +329,15 @@ describe('CrossrefApiClient', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
+        publisher: "Open Development & Education",
         creators: [],
         tags: []
       },
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
-    })).rejects.toThrow('crossref API request failed with HTTP 503');
+    }))).rejects.toThrow('crossref API request failed with HTTP 503');
     await operationRunner.close();
 
     expect(calls.filter((call) => call.url.includes('/servlet/deposit'))).toHaveLength(1);
@@ -354,7 +377,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'test',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -366,15 +389,16 @@ describe('CrossrefApiClient', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
+        publisher: "Open Development & Education",
         creators: [],
         tags: []
       },
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345',
       onSubmitted: () => Promise.reject(new Error('journal unavailable'))
-    })).rejects.toThrow('journal unavailable');
+    }))).rejects.toThrow('journal unavailable');
     await operationRunner.close();
 
     expect(calls.filter((call) => call.url.includes('/servlet/deposit'))).toHaveLength(1);
@@ -408,6 +432,8 @@ describe('CrossrefApiClient', () => {
 	                    <person_name contributor_role="author" sequence="first">
 	                      <given_name>Ada</given_name>
 	                      <surname>Lovelace</surname>
+	                      <affiliations><institution><institution_name>OpenDevEd</institution_name></institution></affiliations>
+	                      <ORCID>https://orcid.org/0000-0002-1825-0097</ORCID>
 	                    </person_name>
 	                  </contributors>
 	                  <titles><title>Evidence report</title></titles>
@@ -435,7 +461,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'production',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -447,7 +473,7 @@ describe('CrossrefApiClient', () => {
 	      filename: 'doi-sync-batch-1.xml',
 	      metadata: {
 	        doi: '10.53832/opendeved.1205',
-	        itemType: 'report',
+	        itemType: 'Report',
 	        title: 'Evidence report',
 	        publicationDate: '2026-05-20',
 	        abstract: 'Original summary',
@@ -458,12 +484,14 @@ describe('CrossrefApiClient', () => {
 	          name: 'Lovelace, Ada',
 	          creatorType: 'author',
 	          givenName: 'Ada',
-	          familyName: 'Lovelace'
+	          familyName: 'Lovelace',
+	          affiliation: 'OpenDevEd',
+	          orcid: '0000-0002-1825-0097'
 	        }],
 	        tags: []
 	      },
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
-    })).resolves.toMatchObject({
+    }))).resolves.toMatchObject({
       status: 'succeeded',
       xmlVerification: {
         status: 'matched',
@@ -494,6 +522,8 @@ describe('CrossrefApiClient', () => {
                     <day>20</day>
                     <year>2026</year>
                   </publication_date>
+                  <publisher><publisher_name>Open Development &amp; Education</publisher_name></publisher>
+                  <institution><institution_name>Open Development &amp; Education</institution_name></institution>
                   <doi_data>
                     <doi>10.53832/opendeved.1205</doi>
                     <resource>https://my.educationevidence.io/lib/record/ABC12345</resource>
@@ -510,19 +540,20 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.verifyReportPaper({
+    await expect(client.verifyPublication(publicationInput({
       environment: 'test',
       emailAddress: 'depositor@example.org',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
+        publisher: "Open Development & Education",
         creators: [],
         tags: []
       },
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
-    })).resolves.toMatchObject({
+    }))).resolves.toMatchObject({
       status: 'matched'
     });
 
@@ -559,6 +590,8 @@ describe('CrossrefApiClient', () => {
                     <day>20</day>
                     <year>2025</year>
                   </publication_date>
+                  <publisher><publisher_name>Open Development &amp; Education</publisher_name></publisher>
+                  <institution><institution_name>Open Development &amp; Education</institution_name></institution>
                   <doi_data>
                     <doi>10.53832/opendeved.1205</doi>
                     <resource>https://my.educationevidence.io/lib/record/ABC12345</resource>
@@ -575,7 +608,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'production',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -587,14 +620,15 @@ describe('CrossrefApiClient', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
+        publisher: "Open Development & Education",
         creators: [],
         tags: []
       },
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
-    })).resolves.toMatchObject({
+    }))).resolves.toMatchObject({
       status: 'pending',
       xmlVerification: {
         status: 'pending',
@@ -631,6 +665,8 @@ describe('CrossrefApiClient', () => {
                     <day>20</day>
                     <year>2026</year>
                   </publication_date>
+                  <publisher><publisher_name>Open Development &amp; Education</publisher_name></publisher>
+                  <institution><institution_name>Open Development &amp; Education</institution_name></institution>
                   <doi_data>
                     <doi>10.53832/opendeved.1205</doi>
                     <resource>https://my.educationevidence.io/lib/record/ABC12345</resource>
@@ -647,7 +683,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'production',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -659,21 +695,101 @@ describe('CrossrefApiClient', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
+        publisher: "Open Development & Education",
         abstract: 'Updated abstract.',
         creators: [],
         tags: []
       },
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
-    })).resolves.toMatchObject({
+    }))).resolves.toMatchObject({
       status: 'pending',
       xmlVerification: {
         status: 'pending',
         reason: 'Crossref XML API metadata has not caught up: abstract'
       }
     });
+  });
+
+  it('does not accept stale abstract or creators after local metadata clears them', async () => {
+    const fetch: CrossrefFetchLike = () => Promise.resolve(textResponse(`
+      <doi_records>
+        <doi_record>
+          <crossref>
+            <report-paper>
+              <report-paper_metadata>
+                <contributors>
+                  <person_name contributor_role="author" sequence="first">
+                    <given_name>Ada</given_name><surname>Lovelace</surname>
+                  </person_name>
+                </contributors>
+                <titles><title>Evidence report</title></titles>
+                <jats:abstract xml:lang="en"><jats:p>Stale abstract.</jats:p></jats:abstract>
+                <publication_date media_type="online"><month>05</month><day>20</day><year>2026</year></publication_date>
+                <publisher><publisher_name>Open Development &amp; Education</publisher_name></publisher>
+                <institution><institution_name>Open Development &amp; Education</institution_name></institution>
+                <doi_data>
+                  <doi>10.53832/opendeved.1205</doi>
+                  <resource>https://my.educationevidence.io/lib/record/ABC12345</resource>
+                </doi_data>
+              </report-paper_metadata>
+            </report-paper>
+          </crossref>
+        </doi_record>
+      </doi_records>
+    `));
+    const client = new CrossrefApiClient({ fetch, poll: { maxAttempts: 1, delayMs: 0 } });
+
+    await expect(client.verifyPublication(publicationInput({
+      environment: 'test',
+      emailAddress: 'depositor@example.org',
+      metadata: {
+        doi: '10.53832/opendeved.1205', itemType: 'Report', title: 'Evidence report',
+        publicationDate: '2026-05-20', publisher: 'Open Development & Education', creators: [], tags: []
+      },
+      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
+    }))).resolves.toMatchObject({
+      status: 'pending',
+      reason: 'Crossref XML API metadata has not caught up: abstract, abstractLanguage, language, creators'
+    });
+  });
+
+  it('accepts the default English language written for an abstract without a supplied language', async () => {
+    const fetch: CrossrefFetchLike = () => Promise.resolve(textResponse(`
+      <doi_records>
+        <doi_record>
+          <crossref>
+            <report-paper>
+              <report-paper_metadata>
+                <titles><title>Evidence report</title></titles>
+                <jats:abstract xml:lang="en"><jats:p>Current abstract.</jats:p></jats:abstract>
+                <publication_date media_type="online"><month>05</month><day>20</day><year>2026</year></publication_date>
+                <publisher><publisher_name>Open Development &amp; Education</publisher_name></publisher>
+                <institution><institution_name>Open Development &amp; Education</institution_name></institution>
+                <doi_data>
+                  <doi>10.53832/opendeved.1205</doi>
+                  <resource>https://my.educationevidence.io/lib/record/ABC12345</resource>
+                </doi_data>
+              </report-paper_metadata>
+            </report-paper>
+          </crossref>
+        </doi_record>
+      </doi_records>
+    `));
+    const client = new CrossrefApiClient({ fetch, poll: { maxAttempts: 1, delayMs: 0 } });
+
+    await expect(client.verifyPublication(publicationInput({
+      environment: 'test',
+      emailAddress: 'depositor@example.org',
+      metadata: {
+        doi: '10.53832/opendeved.1205', itemType: 'Report', title: 'Evidence report',
+        abstract: 'Current abstract.', publicationDate: '2026-05-20',
+        publisher: 'Open Development & Education', creators: [], tags: []
+      },
+      resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
+    }))).resolves.toMatchObject({ status: 'matched' });
   });
 
   it('keeps production deposits pending when Crossref XML API still has stale deposited contributors or publisher', async () => {
@@ -728,7 +844,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'production',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -740,7 +856,7 @@ describe('CrossrefApiClient', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
         abstract: 'Updated abstract.',
@@ -763,11 +879,11 @@ describe('CrossrefApiClient', () => {
         tags: []
       },
       resourceUrl: 'https://my.educationevidence.io/lib/record/ABC12345'
-    })).resolves.toMatchObject({
+    }))).resolves.toMatchObject({
       status: 'pending',
       xmlVerification: {
         status: 'pending',
-        reason: 'Crossref XML API metadata has not caught up: publisher, creators'
+          reason: 'Crossref XML API metadata has not caught up: publisher, institution, creators'
       }
     });
   });
@@ -800,6 +916,8 @@ describe('CrossrefApiClient', () => {
                     <day>20</day>
                     <year>2026</year>
                   </publication_date>
+                  <publisher><publisher_name>Open Development &amp; Education</publisher_name></publisher>
+                  <institution><institution_name>Open Development &amp; Education</institution_name></institution>
                   <program>
                     <related_item>
                       <description>Archived file package</description>
@@ -822,7 +940,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'production',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -834,9 +952,10 @@ describe('CrossrefApiClient', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
+        publisher: "Open Development & Education",
         creators: [],
         tags: []
       },
@@ -847,7 +966,7 @@ describe('CrossrefApiClient', () => {
         identifier: '10.5281/zenodo.20342806',
         description: 'Archived file package'
       }
-    })).resolves.toMatchObject({
+    }))).resolves.toMatchObject({
       status: 'succeeded',
       xmlVerification: {
         status: 'matched'
@@ -882,6 +1001,8 @@ describe('CrossrefApiClient', () => {
                     <day>20</day>
                     <year>2026</year>
                   </publication_date>
+                  <publisher><publisher_name>Open Development &amp; Education</publisher_name></publisher>
+                  <institution><institution_name>Open Development &amp; Education</institution_name></institution>
                   <doi_data>
                     <doi>10.53832/opendeved.1205</doi>
                     <resource>https://my.educationevidence.io/lib/record/ABC12345</resource>
@@ -898,7 +1019,7 @@ describe('CrossrefApiClient', () => {
       poll: { maxAttempts: 1, delayMs: 0 }
     });
 
-    await expect(client.submitReportPaper({
+    await expect(client.submitPublication(publicationInput({
       environment: 'production',
       loginId: 'depositor@example.org:odel',
       password: 'secret',
@@ -910,9 +1031,10 @@ describe('CrossrefApiClient', () => {
       filename: 'doi-sync-batch-1.xml',
       metadata: {
         doi: '10.53832/opendeved.1205',
-        itemType: 'report',
+        itemType: 'Report',
         title: 'Evidence report',
         publicationDate: '2026-05-20',
+        publisher: "Open Development & Education",
         creators: [],
         tags: []
       },
@@ -923,7 +1045,7 @@ describe('CrossrefApiClient', () => {
         identifier: '10.5281/zenodo.20342806',
         description: 'Archived file package'
       }
-    })).resolves.toMatchObject({
+    }))).resolves.toMatchObject({
       status: 'pending',
       xmlVerification: {
         status: 'pending',

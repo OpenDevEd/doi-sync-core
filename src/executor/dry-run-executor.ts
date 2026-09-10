@@ -1,19 +1,46 @@
-import type { SyncAttention, SyncOperation, SyncPlan } from '../planner.js';
+import type { PublicationSyncOperation, PublicationSyncPlan } from '../planner.js';
 import type { ZenodoPublishJournalOperationType } from '../zenodo/journal.js';
 
-type SkippedReason = Extract<SyncPlan, { readonly status: 'skipped' }>['reason'];
-type NeedsAttentionReason = Extract<SyncPlan, { readonly status: 'needs_attention' }>['reason'];
-
 export type DryRunAction =
-  | { readonly kind: 'would_submit_crossref'; readonly payloadHash: string }
+  | {
+      readonly kind: 'would_submit_crossref';
+      readonly payloadHash: string;
+      readonly clearsRelations?: true;
+    }
   | { readonly kind: 'would_verify_pending_crossref'; readonly payloadHash: string }
-  | { readonly kind: 'would_create_zenodo_record'; readonly payloadHash: string; readonly fileManifestHash: string }
-  | { readonly kind: 'would_create_unpublished_zenodo_draft'; readonly payloadHash: string }
-  | { readonly kind: 'would_update_unpublished_zenodo_draft'; readonly depositionId: string; readonly payloadHash: string }
-  | { readonly kind: 'would_adopt_legacy_zenodo_deposition'; readonly depositionId: string; readonly payloadHash: string; readonly fileManifestHash: string }
+  | {
+      readonly kind: 'would_create_zenodo_record';
+      readonly payloadHash: string;
+      readonly fileManifestHash: string;
+    }
   | { readonly kind: 'would_update_zenodo_metadata'; readonly payloadHash: string }
-  | { readonly kind: 'would_update_zenodo_files'; readonly payloadHash: string; readonly fileManifestHash: string; readonly removedAttachmentKeys: readonly string[] }
-  | { readonly kind: 'would_create_zenodo_version'; readonly payloadHash: string; readonly fileManifestHash: string; readonly removedAttachmentKeys: readonly string[] }
+  | {
+      readonly kind: 'would_update_zenodo_files';
+      readonly payloadHash: string;
+      readonly fileManifestHash: string;
+      readonly removedFileKeys: readonly string[];
+    }
+  | {
+      readonly kind: 'would_create_zenodo_version';
+      readonly payloadHash: string;
+      readonly fileManifestHash: string;
+      readonly removedFileKeys: readonly string[];
+    }
+  | {
+      readonly kind: 'would_discard_incomplete_zenodo_draft';
+      readonly depositionId: string;
+      readonly draftRecordId: string;
+      readonly originalOperationType: ZenodoPublishJournalOperationType;
+    }
+  | {
+      readonly kind: 'would_delete_orphaned_zenodo_draft';
+      readonly depositionId: string;
+    }
+  | {
+      readonly kind: 'would_discard_expired_zenodo_file_correction';
+      readonly depositionId: string;
+      readonly draftRecordId: string;
+    }
   | {
       readonly kind: 'would_publish_journaled_zenodo_draft';
       readonly depositionId: string;
@@ -21,86 +48,55 @@ export type DryRunAction =
       readonly originalOperationType: ZenodoPublishJournalOperationType;
       readonly payloadHash: string;
       readonly fileManifestHash?: string;
-    }
-  | { readonly kind: 'would_settle_zotero_writeback' };
-
-export type DryRunExecutionDescription =
-  | {
-      readonly recordId: string;
-      readonly status: 'skipped';
-      readonly reason: SkippedReason;
-      readonly actions: readonly [];
-    }
-  | {
-      readonly recordId: string;
-      readonly status: 'needs_attention';
-      readonly reason: NeedsAttentionReason;
-      readonly actions: readonly [];
-    }
-  | {
-      readonly recordId: string;
-      readonly status: 'noop' | 'write_required';
-      readonly actions: readonly DryRunAction[];
-      readonly attention?: SyncAttention;
     };
 
-export interface DescribeDryRunExecutionInput {
-  readonly recordId: string;
-  readonly plan: SyncPlan;
+export interface DryRunExecutionDescription {
+  readonly recordKey: string;
+  readonly status: PublicationSyncPlan['status'];
+  readonly reason?: string;
+  readonly waitingForFile?: boolean;
+  readonly actions: readonly DryRunAction[];
 }
 
-/** Converts a sync plan into human-readable dry-run actions without touching providers. */
-export function describeDryRunExecution(input: DescribeDryRunExecutionInput): DryRunExecutionDescription {
-  if (input.plan.status === 'skipped') {
+export function describeDryRun(plan: PublicationSyncPlan): DryRunExecutionDescription {
+  const recordKey = 'record' in plan ? plan.record.recordKey : '';
+  if (plan.status === 'skipped' || plan.status === 'needs_attention') {
     return {
-      recordId: input.recordId,
-      status: 'skipped',
-      reason: input.plan.reason,
+      recordKey,
+      status: plan.status,
+      reason: plan.reason,
       actions: []
     };
   }
-
-  if (input.plan.status === 'needs_attention') {
+  if (plan.status === 'waiting_for_file') {
     return {
-      recordId: input.recordId,
-      status: 'needs_attention',
-      reason: input.plan.reason,
+      recordKey,
+      status: plan.status,
+      waitingForFile: true,
       actions: []
     };
   }
-
   return {
-    recordId: input.recordId,
-    status: input.plan.status,
-    actions: input.plan.operations.map(describeOperation),
-    ...(input.plan.attention ? { attention: input.plan.attention } : {})
+    recordKey,
+    status: plan.status,
+    ...(plan.waitingForFile ? { waitingForFile: true } : {}),
+    actions: plan.operations.map(describeOperation)
   };
 }
 
-function describeOperation(operation: SyncOperation): DryRunAction {
+function describeOperation(operation: PublicationSyncOperation): DryRunAction {
   switch (operation.type) {
     case 'crossref_redeposit':
-      return { kind: 'would_submit_crossref', payloadHash: operation.payloadHash };
+      return {
+        kind: 'would_submit_crossref',
+        payloadHash: operation.payloadHash,
+        ...(operation.clearRelations ? { clearsRelations: true } : {})
+      };
     case 'crossref_verify_pending':
       return { kind: 'would_verify_pending_crossref', payloadHash: operation.payloadHash };
     case 'zenodo_create':
       return {
         kind: 'would_create_zenodo_record',
-        payloadHash: operation.payloadHash,
-        fileManifestHash: operation.fileManifestHash
-      };
-    case 'zenodo_draft_create':
-      return { kind: 'would_create_unpublished_zenodo_draft', payloadHash: operation.payloadHash };
-    case 'zenodo_draft_update':
-      return {
-        kind: 'would_update_unpublished_zenodo_draft',
-        depositionId: operation.depositionId,
-        payloadHash: operation.payloadHash
-      };
-    case 'zenodo_legacy_deposition_adopt':
-      return {
-        kind: 'would_adopt_legacy_zenodo_deposition',
-        depositionId: operation.depositionId,
         payloadHash: operation.payloadHash,
         fileManifestHash: operation.fileManifestHash
       };
@@ -111,14 +107,32 @@ function describeOperation(operation: SyncOperation): DryRunAction {
         kind: 'would_update_zenodo_files',
         payloadHash: operation.payloadHash,
         fileManifestHash: operation.fileManifestHash,
-        removedAttachmentKeys: operation.removedAttachmentKeys
+        removedFileKeys: operation.removedFileKeys
       };
     case 'zenodo_new_version':
       return {
         kind: 'would_create_zenodo_version',
         payloadHash: operation.payloadHash,
         fileManifestHash: operation.fileManifestHash,
-        removedAttachmentKeys: operation.removedAttachmentKeys
+        removedFileKeys: operation.removedFileKeys
+      };
+    case 'zenodo_discard_preparing_draft':
+      return {
+        kind: 'would_discard_incomplete_zenodo_draft',
+        depositionId: operation.depositionId,
+        draftRecordId: operation.draftRecordId,
+        originalOperationType: operation.originalOperationType
+      };
+    case 'zenodo_cleanup_orphan_draft':
+      return {
+        kind: 'would_delete_orphaned_zenodo_draft',
+        depositionId: operation.depositionId
+      };
+    case 'zenodo_discard_expired_file_correction':
+      return {
+        kind: 'would_discard_expired_zenodo_file_correction',
+        depositionId: operation.depositionId,
+        draftRecordId: operation.draftRecordId
       };
     case 'zenodo_publish_journaled_draft':
       return {
@@ -127,9 +141,9 @@ function describeOperation(operation: SyncOperation): DryRunAction {
         draftRecordId: operation.draftRecordId,
         originalOperationType: operation.originalOperationType,
         payloadHash: operation.payloadHash,
-        ...(operation.fileManifestHash ? { fileManifestHash: operation.fileManifestHash } : {})
+        ...(operation.fileManifestHash
+          ? { fileManifestHash: operation.fileManifestHash }
+          : {})
       };
-    case 'zotero_writeback':
-      return { kind: 'would_settle_zotero_writeback' };
   }
 }
