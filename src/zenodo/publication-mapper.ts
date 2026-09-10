@@ -1,5 +1,6 @@
 import type {
 	PublicationIdentifiers,
+	PublicationMetadata,
 	PublicationProviderMetadata,
 	PublicationRecordSnapshot
 } from '../publication/record.js';
@@ -15,7 +16,7 @@ export interface ZenodoRecordValidationIssue {
 }
 
 export function validateZenodoPublicationRecord(
-	record: PublicationRecordSnapshot
+	record: PublicationMetadata
 ): readonly ZenodoRecordValidationIssue[] {
 	const issues: ZenodoRecordValidationIssue[] = [];
 	if (!mapZenodoResourceType(record.itemType)) {
@@ -30,10 +31,10 @@ export function validateZenodoPublicationRecord(
 			message: 'Zenodo publication date must be a real date in YYYY-MM-DD format'
 		});
 	}
-	if (!record.abstract) {
+	if (record.title.trim().length < 3) {
 		issues.push({
-			code: 'INVALID_FIELD_VALUE', path: 'abstract',
-			message: 'Zenodo requires an abstract or description'
+			code: 'INVALID_FIELD_VALUE', path: 'title',
+			message: 'Zenodo requires a title with at least 3 characters'
 		});
 	}
 	if (record.creators.length === 0) {
@@ -42,6 +43,12 @@ export function validateZenodoPublicationRecord(
 			message: 'Zenodo requires at least one creator'
 		});
 	}
+	record.creators.forEach((creator, index) => {
+		if (!creator.name.trim()) issues.push({
+			code: 'INVALID_FIELD_VALUE', path: `creators.${index}`,
+			message: 'Zenodo requires a name for every creator'
+		});
+	});
 	if (record.language && !normalizeZenodoLanguage(record.language)) {
 		issues.push({
 			code: 'INVALID_FIELD_VALUE', path: 'language',

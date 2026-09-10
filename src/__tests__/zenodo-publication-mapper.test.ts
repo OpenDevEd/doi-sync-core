@@ -8,11 +8,14 @@ import {
 } from '../zenodo/publication-mapper.js';
 
 describe('Zenodo publication mapper', () => {
+    it('accepts metadata without an abstract or an institution', () => {
+        expect(validateZenodoPublicationRecord(record({ abstract: undefined, institution: undefined }))).toEqual([]);
+    });
 	it.each([
 		['unknown item type', { itemType: 'FutureResearchObject' }, 'itemType'],
 		['partial date', { publicationDate: '2026-05' }, 'publicationDate'],
 		['impossible date', { publicationDate: '2026-02-30' }, 'publicationDate'],
-		['missing description', { abstract: undefined }, 'abstract'],
+		['short title', { title: 'Hi' }, 'title'],
 		['missing creators', { creators: [] }, 'creators'],
 		['unknown language', { language: 'zz' }, 'language'],
 		['unknown license', { license: 'made-up-license' }, 'license']

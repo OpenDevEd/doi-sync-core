@@ -6,6 +6,8 @@ import type {
 import { CROSSREF_LANGUAGE_CODES } from './languages.js';
 import { crossrefContributorRole } from './contributors.js';
 
+type CrossrefRecordInput = Omit<PublicationRecordSnapshot, 'recordKey' | 'canonicalRevision'>;
+
 export type CrossrefPostedContentType = 'preprint' | 'blog' | 'letter' | 'other' | 'poster';
 export type CrossrefBookComponentType = 'chapter' | 'reference_entry';
 
@@ -114,13 +116,23 @@ export type CrossrefRecordMappingResult =
   | { readonly ok: true; readonly record: CrossrefMappedRecord }
   | { readonly ok: false; readonly issues: readonly CrossrefRecordValidationIssue[] };
 
-export function mapCrossrefRecord(
-  record: PublicationRecordSnapshot,
-  doi: string
-): CrossrefRecordMappingResult {
-  const commonIssues = [...validateCommonFields(record, doi), ...validateTypeFields(record)];
-  if (commonIssues.length > 0) return { ok: false, issues: commonIssues };
+export function mapCrossrefRecord(record: CrossrefRecordInput, doi: string): CrossrefRecordMappingResult {
+  return inspectCrossrefRecord(record, doi);
+}
 
+/** Validate metadata before a DOI is reserved, using the same mapper as deposits. */
+export function validateCrossrefPublicationRecord(record: Omit<CrossrefRecordInput, 'landingUrl'>): readonly CrossrefRecordValidationIssue[] {
+  const mapped = inspectCrossrefRecord({...record, landingUrl: ''});
+  return mapped.ok ? [] : mapped.issues;
+}
+
+function inspectCrossrefRecord(record: CrossrefRecordInput, doi?: string): CrossrefRecordMappingResult {
+  const mapped = mapCrossrefItem(record, doi ?? '');
+  const issues = [...validateCommonFields(record, doi), ...validateTypeFields(record), ...(mapped.ok ? [] : mapped.issues)];
+  return issues.length ? {ok: false, issues} : mapped;
+}
+
+function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefRecordMappingResult {
   const metadata: CrossrefMappedMetadata = {
     title: record.title,
     publicationDate: record.publicationDate,
@@ -289,9 +301,9 @@ export function mapCrossrefRecord(
   }
 }
 
-function validateCommonFields(record: PublicationRecordSnapshot, doi: string): readonly CrossrefRecordValidationIssue[] {
+function validateCommonFields(record: CrossrefRecordInput, doi?: string): readonly CrossrefRecordValidationIssue[] {
   const issues: CrossrefRecordValidationIssue[] = [];
-  if (!/^10\.\d{4,9}\/.{1,200}$/u.test(doi)) {
+  if (doi !== undefined && !/^10\.\d{4,9}\/.{1,200}$/u.test(doi)) {
     issues.push({
       code: 'INVALID_FIELD_VALUE', path: 'identifiers.managedCrossrefDoi',
       message: 'Crossref DOI must have a 4-9 digit prefix and a suffix of no more than 200 characters'
@@ -323,7 +335,7 @@ function validateCommonFields(record: PublicationRecordSnapshot, doi: string): r
   return issues;
 }
 
-function validateTypeFields(record: PublicationRecordSnapshot): readonly CrossrefRecordValidationIssue[] {
+function validateTypeFields(record: CrossrefRecordInput): readonly CrossrefRecordValidationIssue[] {
   const issues: CrossrefRecordValidationIssue[] = [];
   const addInvalid = (path: string, message: string): void => {
     issues.push({ code: 'INVALID_FIELD_VALUE', path, message });
@@ -453,7 +465,7 @@ function isCrossrefDate(value: string): boolean {
 
 function mapBookComponent(
   base: CrossrefMappedRecordBase,
-  record: PublicationRecordSnapshot,
+  record: CrossrefRecordInput,
   titleField: 'bookTitle' | 'dictionaryTitle' | 'encyclopediaTitle',
   componentType: CrossrefBookComponentType
 ): CrossrefRecordMappingResult {
@@ -478,7 +490,7 @@ function mapBookComponent(
 
 function mapPostedContent(
   base: CrossrefMappedRecordBase,
-  record: PublicationRecordSnapshot,
+  record: CrossrefRecordInput,
   postedContentType: CrossrefPostedContentType
 ): CrossrefRecordMappingResult {
   const hostingIdentity = record.institution

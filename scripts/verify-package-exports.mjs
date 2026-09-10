@@ -10,3 +10,8 @@ if (typeof core.planPublicationSync !== "function") {
 if (typeof display.buildDoiDisplayLinks !== "function") {
 	throw new Error("The display export cannot be loaded with require()");
 }
+
+const metadata = require("@opendeved/doi-sync-core/metadata");
+if (typeof metadata.validateZenodoPublicationRecord !== "function" || typeof metadata.validateCrossrefPublicationRecord !== "function") {
+    throw new Error("The shared metadata validators cannot be loaded with require()");
+}

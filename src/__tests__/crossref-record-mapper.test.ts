@@ -4,6 +4,9 @@ import { mapCrossrefRecord } from '../crossref/record-mapper.js';
 import type { PublicationRecordSnapshot } from '../publication/record.js';
 
 describe('Crossref record mapper', () => {
+    it('reports date and type-specific requirements together', () => {
+        expect(mapCrossrefRecord(record({ itemType: 'Report', publicationDate: '', publisher: undefined, institution: undefined }), '10.53832/opendeved.1')).toMatchObject({ok: false, issues: [expect.objectContaining({path: 'publicationDate'}), expect.objectContaining({path: 'publisher'})]});
+    });
 	it.each([
 		['JournalArticle', 'journal-article'],
 		['Book', 'book'],

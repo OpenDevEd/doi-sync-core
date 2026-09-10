@@ -1,3 +1,4 @@
+import { validateZenodoPublicationRecord } from './publication-mapper.js';
 import type { PublicationProviderMetadata } from '../publication/record.js';
 import type { JsonValue } from '../hash.js';
 import { asJsonObject, toJsonValue, type JsonObject } from '../json.js';
@@ -96,13 +97,13 @@ export function buildZenodoWritePayload(input: ZenodoWritePayloadInput): ZenodoL
   };
   const resourceType = mapZenodoResourceType(metadata.itemType);
   if (!resourceType) throw new Error(`Zenodo cannot publish Evidence Library item type ${metadata.itemType}`);
-  if (!metadata.abstract) throw new Error('Zenodo requires an abstract or description');
-  if (metadata.creators.length === 0) throw new Error('Zenodo requires at least one creator');
+  const issues = validateZenodoPublicationRecord(metadata);
+  if (issues.length) throw new Error(issues.map(issue => issue.message).join('; '));
 
   output['title'] = metadata.title;
   applyResourceType(output, resourceType);
   output['publication_date'] = metadata.publicationDate;
-  output['description'] = withResourceUrlAppendix(metadata.abstract, input.resourceUrl);
+  replaceOptional(output, 'description', withResourceUrlAppendix(metadata.abstract ?? '', input.resourceUrl));
   output['creators'] = metadata.creators.map(zenodoCreator);
   output['access_right'] = 'open';
   replaceOptional(output, 'license', metadata.license);
@@ -159,7 +160,7 @@ function withResourceUrlAppendix(description: string, resourceUrl: string | unde
   if (!resourceUrl) return description;
   const appendix = buildResourceUrlAppendix(resourceUrl);
   if (description.includes(appendix)) return description;
-  return `${description}\n\n${appendix}`;
+  return description ? `${description}\n\n${appendix}` : appendix;
 }
 
 function buildResourceUrlAppendix(resourceUrl: string): string {

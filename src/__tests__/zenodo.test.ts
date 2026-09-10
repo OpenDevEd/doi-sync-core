@@ -23,6 +23,9 @@ const metadata = {
 };
 
 describe('Zenodo records', () => {
+    it('omits an absent description and removes an old managed description', () => {
+        expect(buildZenodoWritePayload({doiPolicy: 'dual', metadata: {...metadata, abstract: undefined}, existingMetadata: {description: 'Old abstract'}}).metadata).not.toHaveProperty('description');
+    });
 	it('uses the current InvenioRDM accept header', () => {
 		expect(ZENODO_INVENIORDM_ACCEPT).toBe('application/vnd.inveniordm.v1+json');
 	});
