@@ -1,6 +1,6 @@
 import { asBoolean, asRecord, asString } from '../guards.js';
 import { stableJson, type JsonValue } from '../hash.js';
-import { asJsonObject, toJsonValue } from '../json.js';
+import { asJsonObject, toJsonValue, type JsonObject } from '../json.js';
 import { compareCodeUnits } from '../sort.js';
 import type { ZenodoLegacyDepositionPayload } from './records.js';
 
@@ -98,12 +98,25 @@ function managedMetadataDifferences(
 ): readonly string[] {
 	return MANAGED_METADATA_KEYS.flatMap((key) => {
 		if (key === 'doi' && expected[key] === undefined) return [];
-		const observedValue = normalizeManagedMetadataValue(key, observed[key]);
-		const expectedValue = normalizeManagedMetadataValue(key, expected[key]);
+		const observedValue = withoutNullFields(normalizeManagedMetadataValue(key, observed[key]));
+		const expectedValue = withoutNullFields(normalizeManagedMetadataValue(key, expected[key]));
 		return stableJson(observedValue) === stableJson(expectedValue)
 			? []
 			: [`metadata.${key}`];
 	}).sort(compareCodeUnits);
+}
+
+/** Zenodo echoes optional fields it never received as null (creators' affiliation, orcid); absent and null mean the same. */
+function withoutNullFields(value: JsonValue | undefined): JsonValue | undefined {
+	if (Array.isArray(value)) return value.map((entry: JsonValue) => withoutNullFields(entry) ?? null);
+	if (value && typeof value === 'object') {
+		const result: Record<string, JsonValue> = {};
+		for (const [key, entry] of Object.entries(value as JsonObject)) {
+			if (entry !== null) result[key] = withoutNullFields(entry) ?? null;
+		}
+		return result;
+	}
+	return value;
 }
 
 function normalizeManagedMetadataValue(

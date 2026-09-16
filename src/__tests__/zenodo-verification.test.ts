@@ -65,6 +65,22 @@ function deposition(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('Zenodo published-state verification', () => {
+	it('treats fields Zenodo echoes as null the same as absent ones', () => {
+		const verification = verifyZenodoLegacyDepositionState({
+			response: deposition({
+				metadata: {
+					...expectedPayload.metadata,
+					doi: '10.5072/zenodo.501',
+					creators: (expectedPayload.metadata['creators'] as readonly Record<string, unknown>[]).map((creator) => ({ ...creator, gnd: null })),
+					contributors: [{ name: 'OpenDevEd', type: 'HostingInstitution', affiliation: null, orcid: null }]
+				}
+			}),
+			expectedPayload,
+			expectedFiles
+		});
+		expect(verification).toEqual({ status: 'matched' });
+	});
+
 	it('matches managed metadata and files while ignoring provider-owned metadata', () => {
 		expect(verifyZenodoLegacyDepositionState({
 			response: deposition(),
