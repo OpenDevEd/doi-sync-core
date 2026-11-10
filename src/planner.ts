@@ -320,6 +320,7 @@ export function planPublicationSync(input: PlanPublicationSyncInput): Publicatio
     input,
     hashes,
     relation,
+    Boolean(crossrefRecord?.relations?.length),
     zenodoOperations,
     crossrefState
   );
@@ -376,6 +377,7 @@ function planCrossrefPublicationOperations(
   input: PlanPublicationSyncInput,
   hashes: PublicationSyncHashes,
   relation: CrossrefRelation | undefined,
+  recordHasRelations: boolean,
   zenodoOperations: readonly PublicationSyncOperation[],
   state: ProviderSyncState['crossref'] | undefined
 ): readonly PublicationSyncOperation[] {
@@ -397,11 +399,18 @@ function planCrossrefPublicationOperations(
   return [{
     type: 'crossref_redeposit',
     payloadHash: hashes.crossrefPayloadHash,
-    ...(relation || asRecord(state?.lastSuccess?.payloadSnapshot)?.['relation']
+    // As with the archive link, a deposit that has or had relations clears them first, so one taken off the record leaves Crossref too.
+    ...(relation || recordHasRelations || snapshotHasRelations(state?.lastSuccess?.payloadSnapshot)
       ? { clearRelations: true as const }
       : {}),
     ...(relation ? { relation } : {})
   }];
+}
+
+function snapshotHasRelations(snapshot: unknown): boolean {
+  const payload = asRecord(snapshot);
+  const relations = asRecord(payload?.['record'])?.['relations'];
+  return Boolean(payload?.['relation']) || (Array.isArray(relations) && relations.length > 0);
 }
 
 function planZenodoPublicationOperations(

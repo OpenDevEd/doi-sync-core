@@ -273,13 +273,12 @@ export class CrossrefApiClient {
         expected: input.record
       });
       lastVerification = metadataVerification;
-      if (metadataVerification.status !== 'matched') continue;
-      if (!input.relation) return metadataVerification;
-      if (!metadataVerification.record) continue;
+      if (metadataVerification.status !== 'matched' || !metadataVerification.record) continue;
 
-      lastVerification = verifyXmlApiRelation({
+      lastVerification = verifyXmlApiDetails({
         record: metadataVerification.record,
-        relation: input.relation
+        expected: input.record,
+        ...(input.relation ? { relation: input.relation } : {})
       });
       if (lastVerification.status === 'matched') return lastVerification;
     }
@@ -491,7 +490,9 @@ function expectedTypeDetails(record: CrossrefMappedRecord): {
   readonly groupTitle: string | null;
 } {
   return {
-    issns: record.kind === 'journal-article' ? normalizeStringArray(record.issns) : [],
+    issns: record.kind === 'journal-article'
+      ? normalizeStringArray(record.issns)
+      : record.kind === 'report' ? normalizeStringArray(record.series?.issns ?? []) : [],
     isbns: 'isbns' in record ? normalizeStringArray(record.isbns) : [],
     volume: record.kind === 'journal-article' ? normalizeText(record.volume) : null,
     issue: record.kind === 'journal-article' ? normalizeText(record.issue) : null,
@@ -538,6 +539,8 @@ function expectedContainerTitle(record: CrossrefMappedRecord): string | undefine
       return record.journalTitle;
     case 'book-component':
       return record.bookTitle;
+    case 'report':
+      return record.series?.title;
     case 'conference-paper':
       return record.proceedingsTitle;
     case 'dataset':
@@ -547,30 +550,40 @@ function expectedContainerTitle(record: CrossrefMappedRecord): string | undefine
   }
 }
 
-function verifyXmlApiRelation(input: {
+/**
+ * The sections a record gives are held as given: its funders, the DOIs it cites, and its relations with the
+ * deposit's own. A section given empty is held as none. Without relations of its own, the deposit's relation only has
+ * to be there, and 'delete-all' wants none left.
+ */
+function verifyXmlApiDetails(input: {
   readonly record: CrossrefUnixrefRecord;
-  readonly relation: CrossrefDepositRelation;
+  readonly expected: CrossrefMappedRecord;
+  readonly relation?: CrossrefDepositRelation;
 }): CrossrefXmlApiVerification {
-  if (input.relation === 'delete-all') {
-    return (input.record.relations?.length ?? 0) === 0
-      ? { status: 'matched', record: input.record }
-      : {
-          status: 'pending', record: input.record,
-          reason: 'Crossref XML API metadata has not caught up: relations=not-cleared'
-        };
-  }
-  if (hasExpectedRelation(input.record.relations ?? [], input.relation)) {
-    return {
-      status: 'matched',
-      record: input.record
-    };
-  }
+  const { record, expected, relation } = input;
+  const held = record.relations ?? [];
+  const wanted = relation === 'delete-all' ? [] : [...(expected.relations ?? []), ...(relation ? [relation] : [])];
+  const relationsHeld = relation === 'delete-all' || expected.relations
+    ? sameStringArray(normalizeStringArray(held.map(relationSignature)), normalizeStringArray(wanted.map(relationSignature)))
+    : wanted.every((item) => hasExpectedRelation(held, item));
+  const mismatches = [
+    relationsHeld ? null : relation === 'delete-all' ? 'relations=not-cleared' : 'relation=missing',
+    expected.funding && !sameStringArray(normalizeStringArray((record.funding ?? []).map(fundingSignature)), normalizeStringArray(expected.funding.map(fundingSignature))) ? 'funding' : null,
+    expected.references && !sameStringArray(normalizeStringArray((record.references ?? []).map((doi) => normalizeDoi(doi) ?? doi)), normalizeStringArray(expected.references.map((doi) => normalizeDoi(doi) ?? doi))) ? 'references' : null
+  ].filter((entry): entry is string => Boolean(entry));
+  return mismatches.length === 0
+    ? { status: 'matched', record }
+    : { status: 'pending', record, reason: `Crossref XML API metadata has not caught up: ${mismatches.join(', ')}` };
+}
 
-  return {
-    status: 'pending',
-    record: input.record,
-    reason: 'Crossref XML API metadata has not caught up: relation=missing'
-  };
+function relationSignature(relation: { readonly type?: string; readonly identifierType?: string; readonly identifier?: string; readonly description?: string | undefined }): string {
+  const identifierType = relation.identifierType?.toLowerCase();
+  const identifier = identifierType === 'doi' ? normalizeDoi(relation.identifier) : normalizeText(relation.identifier);
+  return [relation.type, identifierType, identifier, normalizeText(relation.description)].join('|');
+}
+
+function fundingSignature(funding: { readonly funderName: string; readonly funderIdentifier?: string | undefined; readonly awards: readonly string[] }): string {
+  return [normalizeText(funding.funderName), normalizeUrl(funding.funderIdentifier), ...normalizeStringArray(funding.awards)].join('|');
 }
 
 function hasExpectedRelation(

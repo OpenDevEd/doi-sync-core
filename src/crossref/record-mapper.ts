@@ -1,7 +1,10 @@
 import type { JsonValue } from '../hash.js';
+import { normalizeDoi } from '../doi.js';
 import type {
   PublicationCreator,
-  PublicationRecordSnapshot
+  PublicationFunding,
+  PublicationRecordSnapshot,
+  PublicationRelation
 } from '../publication/record.js';
 import { CROSSREF_LANGUAGE_CODES } from './languages.js';
 import { crossrefContributorRole } from './contributors.js';
@@ -19,6 +22,17 @@ export interface CrossrefPages {
 interface CrossrefMappedRecordBase {
   readonly metadata: CrossrefMappedMetadata;
   readonly landingUrl: string;
+  /** Each list, when given, is deposited whole, and given empty clears what Crossref held. */
+  readonly funding?: readonly PublicationFunding[];
+  /** DOIs the work cites, normalized. */
+  readonly references?: readonly string[];
+  readonly relations?: readonly PublicationRelation[];
+}
+
+/** The series a report is one of, deposited as `report-paper_series_metadata` once it has an ISSN. */
+export interface CrossrefSeries {
+  readonly title: string;
+  readonly issns: readonly string[];
 }
 
 export interface CrossrefMappedMetadata {
@@ -79,6 +93,7 @@ export type CrossrefMappedRecord =
       readonly edition?: string | undefined;
       readonly isbns: readonly string[];
       readonly itemNumber?: string | undefined;
+      readonly series?: CrossrefSeries | undefined;
     })
   | (CrossrefMappedRecordBase & {
       readonly kind: 'standard';
@@ -141,7 +156,14 @@ function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefReco
     creators: mapCreators(record.creators),
     doi
   };
-  const base = { metadata, landingUrl: record.landingUrl };
+  // A list given empty is kept: the deposit then clears that section. One left out leaves the deposit as it was.
+  const base = {
+    metadata,
+    landingUrl: record.landingUrl,
+    ...(record.funding ? { funding: record.funding } : {}),
+    ...(record.references ? { references: record.references.map((reference) => normalizeDoi(reference) ?? reference) } : {}),
+    ...(record.relations ? { relations: record.relations } : {})
+  };
   const organization = record.publisher ?? record.institution;
 
   switch (record.itemType) {
@@ -221,7 +243,8 @@ function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefReco
           ...(record.institution ? { institution: record.institution } : {}),
           isbns: identifierList(record.fields['ISBN']),
           ...optionalField('edition', record.fields['edition']),
-          ...optionalField('itemNumber', record.fields['reportNumber'] ?? record.fields['number'])
+          ...optionalField('itemNumber', record.fields['reportNumber'] ?? record.fields['number']),
+          ...reportSeries(record)
         }
       }));
     case 'Standard': {
@@ -323,6 +346,16 @@ function validateCommonFields(record: CrossrefRecordInput, doi?: string): readon
       message: 'Crossref language must be a supported ISO 639-1 or ISO 639-3 code'
     });
   }
+  (record.references ?? []).forEach((reference, index) => {
+    if (!normalizeDoi(reference)) {
+      issues.push({ code: 'INVALID_FIELD_VALUE', path: `references.${index}`, message: 'Crossref references must be DOIs' });
+    }
+  });
+  (record.relations ?? []).forEach((relation, index) => {
+    if (relation.identifierType === 'doi' && !normalizeDoi(relation.identifier)) {
+      issues.push({ code: 'INVALID_FIELD_VALUE', path: `relations.${index}.identifier`, message: 'A DOI relation must name a DOI' });
+    }
+  });
   record.creators.forEach((creator, index) => {
     if (creator.orcid && !isValidOrcid(creator.orcid)) {
       issues.push({
@@ -385,12 +418,20 @@ function validateTypeFields(record: CrossrefRecordInput): readonly CrossrefRecor
   }
   if (record.itemType === 'Dataset') validateLength('fields.version', record.fields['version'], 100);
   if (record.itemType === 'Report') {
+    validateIdentifiers('fields.ISSN', record.fields['ISSN'], /^\d{4}-?\d{3}[\dX]$/iu, 'ISSN', 8, 9);
     validateLength('fields.reportNumber', record.fields['reportNumber'] ?? record.fields['number'], 32);
   }
   if (['Preprint', 'BlogPost', 'Letter', 'Document', 'Manuscript', 'Presentation'].includes(record.itemType)) {
     validateLength('fields.number', record.fields['number'], 32);
   }
   return issues;
+}
+
+/** A report's series, when it has a title and an ISSN: Crossref's series metadata requires an ISSN. */
+function reportSeries(record: CrossrefRecordInput): { readonly series?: CrossrefSeries } {
+  const title = fieldString(record.fields['seriesTitle']);
+  const issns = identifierList(record.fields['ISSN']);
+  return title && issns.length > 0 ? { series: { title, issns } } : {};
 }
 
 function isValidIssn(value: string): boolean {

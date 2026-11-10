@@ -84,10 +84,12 @@ export {
 export type {
 	CrossrefDepositMetadata,
 	PublicationCreator,
+	PublicationFunding,
 	PublicationIdentifiers,
 	PublicationMetadata,
 	PublicationProviderMetadata,
-	PublicationRecordSnapshot
+	PublicationRecordSnapshot,
+	PublicationRelation
 } from './publication/record.js';
 export type {
 	CrossrefProviderSyncState,

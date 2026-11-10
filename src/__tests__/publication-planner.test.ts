@@ -55,6 +55,30 @@ describe('provider-neutral publication planner', () => {
     ]);
   });
 
+  it('clears the relations a record carried when one is taken off it', () => {
+    const plan = planPublicationSync({
+      record: publicationRecord(),
+      files: fileManifest(),
+      identifiers: { managedCrossrefDoi: '10.53832/opendeved.1205' },
+      targets: { crossref: { enabled: true, environment: 'test' }, zenodo: { enabled: false } },
+      state: {
+        crossref: {
+          environment: 'test',
+          lastSuccess: {
+            payloadHash: 'old-payload',
+            payloadSnapshot: {
+              record: { relations: [{ type: 'hasVersion', identifierType: 'uri', identifier: 'https://example.org/v1' }] }
+            }
+          }
+        }
+      }
+    });
+
+    expect('operations' in plan ? plan.operations : []).toEqual([
+      expect.objectContaining({ type: 'crossref_redeposit', clearRelations: true })
+    ]);
+  });
+
   it('resumes a pending Crossref relation clear before depositing the desired payload', () => {
     const input = {
       record: publicationRecord(),

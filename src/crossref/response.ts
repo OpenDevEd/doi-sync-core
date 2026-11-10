@@ -12,6 +12,8 @@ export interface CrossrefDiagnosticResult {
   readonly recordCount: number;
   readonly successCount: number | null;
   readonly failureCount: number;
+  /** What Crossref said about each record it refused, in its own words. */
+  readonly failures?: readonly string[];
 }
 
 export interface CrossrefUnixrefRecord {
@@ -48,6 +50,15 @@ export interface CrossrefUnixrefRecord {
   readonly resourceUrl?: string;
   readonly depositTimestamp?: string;
   readonly relations?: readonly CrossrefUnixrefRelation[];
+  readonly funding?: readonly CrossrefUnixrefFunding[];
+  /** The DOIs its citation list holds. */
+  readonly references?: readonly string[];
+}
+
+export interface CrossrefUnixrefFunding {
+  readonly funderName: string;
+  readonly funderIdentifier?: string;
+  readonly awards: readonly string[];
 }
 
 export interface CrossrefUnixrefCreator {
@@ -97,12 +108,19 @@ export function parseCrossrefDiagnosticXml(xml: string): CrossrefDiagnosticResul
   const successCount = asNumber(batchData?.['success_count']);
   const failureCount = asNumber(batchData?.['failure_count']) ?? 0;
 
+  const failures = records(diagnostic?.['record_diagnostic'])
+    .filter((record) => textValue(record['@_status'])?.toLowerCase() === 'failure')
+    .flatMap((record) => {
+      const message = textValue(record['msg']);
+      return message ? [message] : [];
+    });
   return {
     status: resolveStatus({ recordCount, successCount, failureCount }),
     ...optionalString('batchStatus', diagnostic?.['@_status']),
     recordCount,
     successCount,
-    failureCount
+    failureCount,
+    ...(failures.length > 0 ? { failures } : {})
   };
 }
 
@@ -131,6 +149,8 @@ export function parseCrossrefUnixrefXml(xml: string): CrossrefUnixrefRecord | nu
   const institution = container.institution;
   const creators = parseCreators(metadata);
   const relations = parseRelations(metadata);
+  const funding = parseFunding(metadata);
+  const references = parseReferences(metadata);
 
   return {
     kind: container.kind,
@@ -151,7 +171,9 @@ export function parseCrossrefUnixrefXml(xml: string): CrossrefUnixrefRecord | nu
     ...(creators.length > 0 ? { creators } : {}),
     ...optionalString('resourceUrl', doiData?.['resource']),
     ...optionalString('depositTimestamp', doiRecord?.['@_timestamp']),
-    ...(relations.length > 0 ? { relations } : {})
+    ...(relations.length > 0 ? { relations } : {}),
+    ...(funding.length > 0 ? { funding } : {}),
+    ...(references.length > 0 ? { references } : {})
   };
 }
 
@@ -259,10 +281,15 @@ function findPublicationContainer(crossref: Record<string, unknown>): CrossrefPu
     };
   }
   const report = firstRecord(crossref['report-paper']);
-  const reportMetadata = asRecord(report?.['report-paper_metadata']);
+  const reportMetadata = asRecord(report?.['report-paper_metadata']) ?? asRecord(report?.['report-paper_series_metadata']);
   if (reportMetadata) {
+    const series = asRecord(reportMetadata['series_metadata']);
     return {
       kind: 'report', metadata: reportMetadata,
+      ...(series ? {
+        ...optionalString('containerTitle', asRecord(series['titles'])?.['title']),
+        ...optionalTextValues('issns', series['issn'])
+      } : {}),
       ...optionalPublisher(reportMetadata), ...optionalInstitution(reportMetadata),
       ...optionalTextValues('isbns', reportMetadata['isbn']),
       ...optionalString('edition', reportMetadata['edition_number']),
@@ -511,6 +538,32 @@ function parseRelations(metadata: Record<string, unknown>): readonly CrossrefUni
     }
   }
   return relations;
+}
+
+const assertions = (element: Record<string, unknown>) => [...records(element['assertion']), ...records(element['fr:assertion'])];
+const named = (element: Record<string, unknown>, name: string) => assertions(element).filter((assertion) => assertion['@_name'] === name);
+
+function parseFunding(metadata: Record<string, unknown>): readonly CrossrefUnixrefFunding[] {
+  const funding: CrossrefUnixrefFunding[] = [];
+  for (const program of [...records(metadata['program']), ...records(metadata['fr:program'])]) {
+    if (program['@_name'] !== 'fundref') continue;
+    for (const group of named(program, 'fundgroup')) {
+      const funder = named(group, 'funder_name')[0];
+      const funderName = funder ? elementText(funder) : null;
+      if (!funder || !funderName) continue;
+      const funderIdentifier = named(funder, 'funder_identifier').map(elementText).find(Boolean) ?? named(group, 'funder_identifier').map(elementText).find(Boolean);
+      funding.push({
+        funderName,
+        ...(funderIdentifier ? { funderIdentifier } : {}),
+        awards: named(group, 'award_number').flatMap((award) => elementText(award) ?? [])
+      });
+    }
+  }
+  return funding;
+}
+
+function parseReferences(metadata: Record<string, unknown>): readonly string[] {
+  return records(asRecord(metadata['citation_list'])?.['citation']).flatMap((citation) => textValue(citation['doi']) ?? elementText(citation['doi']) ?? []);
 }
 
 function resolveStatus(input: {
