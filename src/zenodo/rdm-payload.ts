@@ -68,6 +68,16 @@ const IDENTIFIER_SCHEMES: Partial<Readonly<Record<PublicationRelation['identifie
   handle: 'handle'
 };
 
+/** A payload saved after a write, read back at the provider boundary: one in another format is refused, never guessed at. */
+export function parseZenodoRecordPayload(input: unknown): ZenodoRecordPayload {
+  const value = typeof input === 'object' && input !== null && !Array.isArray(input) ? input as Record<string, unknown> : null;
+  const isObject = (entry: unknown): entry is JsonObject => typeof entry === 'object' && entry !== null && !Array.isArray(entry);
+  if (!value || !isObject(value['metadata']) || !isObject(value['custom_fields']) || (value['pids'] !== undefined && !isObject(value['pids']))) {
+    throw new Error('Expected a Zenodo record payload in the InvenioRDM format');
+  }
+  return { metadata: value['metadata'], custom_fields: value['custom_fields'], ...(value['pids'] ? { pids: value['pids'] } : {}) };
+}
+
 export function buildZenodoRecordPayload(input: ZenodoRecordPayloadInput): ZenodoRecordPayload {
   const { metadata } = input;
   const resourceType = mapZenodoResourceType(metadata.itemType);

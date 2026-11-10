@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildZenodoRecordPayload } from '../zenodo/rdm-payload.js';
+import { buildZenodoRecordPayload, parseZenodoRecordPayload } from '../zenodo/rdm-payload.js';
 import {
 	parseZenodoLegacyDepositionIdentifiers,
 	parseZenodoRecordIdentifiers,
@@ -126,6 +126,12 @@ describe('Zenodo records', () => {
 		const thesis = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'Thesis', fields: { thesisType: 'PhD' } } });
 		expect(thesis.custom_fields).toEqual({ 'thesis:thesis': { university: 'Open Development & Education', type: 'PhD' } });
 		expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'Map' } }).metadata['resource_type']).toEqual({ id: 'image-other' });
+	});
+
+	it('reads a saved payload back, and refuses one saved in the legacy deposit format', () => {
+		const payload = buildZenodoRecordPayload({ doiPolicy: 'external-crossref', metadata });
+		expect(parseZenodoRecordPayload(JSON.parse(JSON.stringify(payload)))).toEqual(payload);
+		expect(() => parseZenodoRecordPayload({ metadata: { upload_type: 'publication' } })).toThrow('InvenioRDM format');
 	});
 
 	it('rejects child records because attachments are published as files, not records', () => {

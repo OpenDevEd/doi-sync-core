@@ -201,7 +201,7 @@ export type {
 	ZenodoResourceType
 } from './zenodo/resource-mapper.js';
 export { ZENODO_INVENIORDM_ACCEPT } from './zenodo/records.js';
-export { buildZenodoRecordPayload, resourceTypeId } from './zenodo/rdm-payload.js';
+export { buildZenodoRecordPayload, parseZenodoRecordPayload, resourceTypeId } from './zenodo/rdm-payload.js';
 export type { DoiPolicy, ZenodoKnownRors, ZenodoRecordPayload, ZenodoRecordPayloadInput } from './zenodo/rdm-payload.js';
 export type {
 	ZenodoDoiLookupResult,

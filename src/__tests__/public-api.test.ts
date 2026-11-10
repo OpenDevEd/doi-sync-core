@@ -23,6 +23,7 @@ const expectedRuntimeExports = [
 	'buildPublicationPayloadSnapshots',
 	'buildZenodoPayloadSnapshot',
 	'buildZenodoRecordPayload',
+	'parseZenodoRecordPayload',
 	'resourceTypeId',
 	'CREDIT_ROLES',
 	'isOpenLicense',
