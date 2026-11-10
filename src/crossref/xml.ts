@@ -437,7 +437,7 @@ function appendContributors(
 }
 
 function appendFunding(parent: XMLBuilder, funding: readonly PublicationFunding[] | undefined): void {
-	if (!funding?.length) return;
+	if (!funding) return;
 	const program = parent.ele('fr:program', { name: 'fundref' });
 	for (const funder of funding) {
 		const group = program.ele('fr:assertion', { name: 'fundgroup' });
@@ -450,7 +450,8 @@ function appendFunding(parent: XMLBuilder, funding: readonly PublicationFunding[
 }
 
 /**
- * The record's own relations and the deposit's (the archived file package), or an empty program that clears them all.
+ * The record's own relations and the deposit's (the archived file package), or an empty program that clears them all:
+ * on 'delete-all', or when the record gives its relations as none.
  * Another version of the same work is an intra-work relation in Crossref's schema; the rest relate other works.
  */
 function appendRelations(
@@ -463,7 +464,7 @@ function appendRelations(
 		return;
 	}
 	const relations = [...(record.relations ?? []), ...(relation ? [relation] : [])];
-	if (relations.length === 0) return;
+	if (!record.relations && relations.length === 0) return;
 	const program = parent.ele('rel:program');
 	for (const item of relations) {
 		const relatedItem = program.ele('rel:related_item');
@@ -478,7 +479,7 @@ function appendRelations(
 }
 
 function appendCitations(parent: XMLBuilder, references: readonly string[] | undefined): void {
-	if (!references?.length) return;
+	if (!references) return;
 	const list = parent.ele('citation_list');
 	references.forEach((doi, index) => appendTextElement(list.ele('citation', { key: `ref${index + 1}` }), 'doi', doi));
 }

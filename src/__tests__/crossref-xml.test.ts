@@ -54,6 +54,8 @@ describe('Crossref 5.5 publication XML', () => {
 			...itemTypes.map((itemType) => buildCrossrefPublicationXml(xmlInput(mappedRecord(itemType, WORK_DETAILS), ARCHIVE_RELATION))),
 			buildCrossrefPublicationXml(xmlInput(seriesReport(), ARCHIVE_RELATION)),
 			buildCrossrefPublicationXml(xmlInput(seriesReport(), 'delete-all')),
+			buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', NO_DETAILS))),
+			buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', { ...NO_DETAILS, fields: SERIES_FIELDS }))),
 			buildCrossrefPublicationXml(xmlInput(report, {
 				type: 'isSupplementedBy', identifierType: 'doi', identifier: '10.5281/zenodo.15043088'
 			})),
@@ -105,6 +107,16 @@ describe('Crossref 5.5 publication XML', () => {
 		expect(xml.match(/<rel:related_item>/g)).toHaveLength(3);
 	});
 
+	it('clears funding, citations and relations a record gives as none, and leaves them alone when it gives nothing', () => {
+		const cleared = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', NO_DETAILS)));
+		const untouched = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report')));
+
+		expect(cleared).toContain('<fr:program name="fundref"/>');
+		expect(cleared).toContain('<rel:program/>');
+		expect(cleared).toContain('<citation_list/>');
+		expect(untouched).not.toMatch(/fr:program|rel:program|citation_list/);
+	});
+
 	it('deposits a report in a series with an ISSN as series metadata', () => {
 		const xml = buildCrossrefPublicationXml(xmlInput(seriesReport()));
 
@@ -143,11 +155,11 @@ const ARCHIVE_RELATION = {
 	type: 'isSupplementedBy', identifierType: 'doi', identifier: '10.5281/zenodo.15043088', description: 'Archived file package'
 } as const;
 
+const NO_DETAILS = { funding: [], references: [], relations: [] } satisfies Partial<PublicationRecordSnapshot>;
+const SERIES_FIELDS = { reportNumber: 'R100001', seriesTitle: 'Openscholar Reports', ISSN: '2049-3630' };
+
 function seriesReport(): CrossrefMappedRecord {
-	return mappedRecord('Report', {
-		...WORK_DETAILS,
-		fields: { reportNumber: 'R100001', seriesTitle: 'Openscholar Reports', ISSN: '2049-3630' }
-	});
+	return mappedRecord('Report', { ...WORK_DETAILS, fields: SERIES_FIELDS });
 }
 
 function xmlInput(record: CrossrefMappedRecord, relation?: Parameters<typeof buildCrossrefPublicationXml>[0]['relation']) {

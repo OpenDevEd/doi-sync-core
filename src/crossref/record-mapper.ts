@@ -22,6 +22,7 @@ export interface CrossrefPages {
 interface CrossrefMappedRecordBase {
   readonly metadata: CrossrefMappedMetadata;
   readonly landingUrl: string;
+  /** Each list, when given, is deposited whole, and given empty clears what Crossref held. */
   readonly funding?: readonly PublicationFunding[];
   /** DOIs the work cites, normalized. */
   readonly references?: readonly string[];
@@ -155,13 +156,13 @@ function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefReco
     creators: mapCreators(record.creators),
     doi
   };
-  const references = (record.references ?? []).map((reference) => normalizeDoi(reference) ?? reference);
+  // A list given empty is kept: the deposit then clears that section. One left out leaves the deposit as it was.
   const base = {
     metadata,
     landingUrl: record.landingUrl,
-    ...(record.funding?.length ? { funding: record.funding } : {}),
-    ...(references.length ? { references } : {}),
-    ...(record.relations?.length ? { relations: record.relations } : {})
+    ...(record.funding ? { funding: record.funding } : {}),
+    ...(record.references ? { references: record.references.map((reference) => normalizeDoi(reference) ?? reference) } : {}),
+    ...(record.relations ? { relations: record.relations } : {})
   };
   const organization = record.publisher ?? record.institution;
 
