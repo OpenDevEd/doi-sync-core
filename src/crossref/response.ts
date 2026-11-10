@@ -12,6 +12,8 @@ export interface CrossrefDiagnosticResult {
   readonly recordCount: number;
   readonly successCount: number | null;
   readonly failureCount: number;
+  /** What Crossref said about each record it refused, in its own words. */
+  readonly failures?: readonly string[];
 }
 
 export interface CrossrefUnixrefRecord {
@@ -97,12 +99,19 @@ export function parseCrossrefDiagnosticXml(xml: string): CrossrefDiagnosticResul
   const successCount = asNumber(batchData?.['success_count']);
   const failureCount = asNumber(batchData?.['failure_count']) ?? 0;
 
+  const failures = records(diagnostic?.['record_diagnostic'])
+    .filter((record) => textValue(record['@_status'])?.toLowerCase() === 'failure')
+    .flatMap((record) => {
+      const message = textValue(record['msg']);
+      return message ? [message] : [];
+    });
   return {
     status: resolveStatus({ recordCount, successCount, failureCount }),
     ...optionalString('batchStatus', diagnostic?.['@_status']),
     recordCount,
     successCount,
-    failureCount
+    failureCount,
+    ...(failures.length > 0 ? { failures } : {})
   };
 }
 

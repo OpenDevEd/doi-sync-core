@@ -32,6 +32,20 @@ describe('Crossref diagnostic response parsing', () => {
     `).status).toBe('failed');
   });
 
+  it('keeps what Crossref said about each record it refused', () => {
+    expect(parseCrossrefDiagnosticXml(`
+      <doi_batch_diagnostic status="completed">
+        <record_diagnostic status="Success"><doi>10.53832/a</doi><msg>Successfully added</msg></record_diagnostic>
+        <record_diagnostic status="Failure"><doi>10.53832/b</doi><msg>ISSN 2049-3630 is assigned to another title</msg></record_diagnostic>
+        <batch_data>
+          <record_count>2</record_count>
+          <success_count>1</success_count>
+          <failure_count>1</failure_count>
+        </batch_data>
+      </doi_batch_diagnostic>
+    `)).toMatchObject({ status: 'failed', failures: ['ISSN 2049-3630 is assigned to another title'] });
+  });
+
   it('treats missing success count as pending', () => {
     expect(parseCrossrefDiagnosticXml(`
       <doi_batch_diagnostic status="submitted">
