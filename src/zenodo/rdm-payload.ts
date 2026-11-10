@@ -123,7 +123,7 @@ export function buildZenodoRecordPayload(input: ZenodoRecordPayloadInput): Zenod
       }),
       ...(issn && (seriesTitle || field('publicationTitle')) ? [{ identifier: issn, scheme: 'issn', relation_type: { id: 'ispartof' } }] : [])
     ]),
-    sizes: metadata.pages ? [`${metadata.pages} pages`] : undefined,
+    sizes: metadata.pages ? [`${metadata.pages} ${metadata.pages === 1 ? 'page' : 'pages'}`] : undefined,
     formats: nonEmpty([...(metadata.formats ?? [])]),
     locations: metadata.locations?.length ? { features: metadata.locations.map((location) => ({ place: location.place })) } : undefined,
     funding: nonEmpty((metadata.funding ?? []).flatMap((funding) => {
