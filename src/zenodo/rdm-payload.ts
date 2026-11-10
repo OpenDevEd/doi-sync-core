@@ -24,6 +24,8 @@ export interface ZenodoRecordPayload {
 export interface ZenodoKnownRors {
   readonly affiliations: ReadonlySet<string>;
   readonly funders: ReadonlySet<string>;
+  /** Programming languages Zenodo's CodeMeta vocabulary holds, by its lower-case IDs. */
+  readonly programmingLanguages?: ReadonlySet<string>;
 }
 
 export interface ZenodoRecordPayloadInput {
@@ -40,6 +42,12 @@ export const ZENODO_MANAGED_METADATA_KEYS: ReadonlySet<string> = new Set([
   'additional_descriptions', 'rights', 'copyright', 'contributors', 'subjects', 'languages', 'dates', 'version',
   'identifiers', 'related_identifiers', 'sizes', 'formats', 'locations', 'funding', 'references'
 ]);
+
+/** The custom fields the package writes: each is replaced, or removed when the record has nothing for it. */
+export const ZENODO_MANAGED_CUSTOM_FIELDS: ReadonlySet<string> = new Set(['journal:journal', 'imprint:imprint', 'meeting:meeting', 'thesis:thesis', 'code:programmingLanguage']);
+
+/** A programming language as Zenodo's CodeMeta vocabulary names it: `python`, `javascript`. */
+export const programmingLanguageId = (value: string) => value.trim().toLowerCase();
 
 /** Creator types that make someone a contributor rather than a creator, with Zenodo's role for each. */
 const CONTRIBUTOR_ROLES: Readonly<Record<string, string>> = {
@@ -99,7 +107,7 @@ export function buildZenodoRecordPayload(input: ZenodoRecordPayloadInput): Zenod
   const subjects = unique([...metadata.tags, ...(metadata.subjects ?? [])]);
 
   const output: Record<string, JsonValue> = {
-    resource_type: { id: resourceTypeId(resourceType) },
+    resource_type: { id: resourceTypeId(resourceType, metadata.itemType) },
     title: metadata.title,
     publication_date: metadata.publicationDate,
     creators: people.creators.map((creator) => creatorEntry(creator, input.known)),
@@ -123,6 +131,7 @@ export function buildZenodoRecordPayload(input: ZenodoRecordPayloadInput): Zenod
     version: field('version'),
     identifiers: nonEmpty([
       ...(input.resourceUrl ? [{ identifier: input.resourceUrl, scheme: 'url' }] : []),
+      ...(field('PMID') ? [{ identifier: field('PMID')!, scheme: 'pmid' }] : []),
       ...(itemNumber ? [{ identifier: itemNumber, scheme: 'other' }] : [])
     ]),
     related_identifiers: nonEmpty([
@@ -153,7 +162,7 @@ export function buildZenodoRecordPayload(input: ZenodoRecordPayloadInput): Zenod
   const journal = compact({ title: field('publicationTitle'), issn, volume: field('volume'), issue: field('issue'), pages: field('pages') });
   if (journal && field('publicationTitle')) customFields['journal:journal'] = journal;
   const imprint = compact({
-    title: field('bookTitle') ?? field('proceedingsTitle') ?? seriesTitle,
+    title: field('bookTitle') ?? field('dictionaryTitle') ?? field('encyclopediaTitle') ?? field('proceedingsTitle') ?? seriesTitle,
     place: field('place'),
     isbn: field('ISBN'),
     edition: field('edition'),
@@ -161,8 +170,13 @@ export function buildZenodoRecordPayload(input: ZenodoRecordPayloadInput): Zenod
   });
   if (imprint) customFields['imprint:imprint'] = imprint;
   if (metadata.itemType === 'ConferencePaper') {
-    const meeting = compact({ title: field('conferenceName'), acronym: field('conferenceAcronym'), dates: field('conferenceDate'), place: field('place') });
+    // Where the conference was held, not where its proceedings were published.
+    const meeting = compact({ title: field('conferenceName'), acronym: field('conferenceAcronym'), dates: field('conferenceDate'), place: field('eventPlace') });
     if (meeting) customFields['meeting:meeting'] = meeting;
+  }
+  const programmingLanguage = field('programmingLanguage');
+  if (programmingLanguage && (input.known?.programmingLanguages?.has(programmingLanguageId(programmingLanguage)) ?? true)) {
+    customFields['code:programmingLanguage'] = [{ id: programmingLanguageId(programmingLanguage) }];
   }
   if (metadata.itemType === 'Thesis') {
     const thesis = compact({ university: metadata.institution ?? metadata.publisher, type: field('thesisType') ?? field('degree') });
@@ -177,9 +191,13 @@ export function buildZenodoRecordPayload(input: ZenodoRecordPayloadInput): Zenod
   };
 }
 
-/** The resource type's ID in Zenodo's vocabulary: `publication-report`, `image-figure`, `dataset`. */
-export function resourceTypeId(resourceType: ZenodoResourceType): string {
-  if (resourceType.uploadType === 'publication') return `publication-${resourceType.publicationType}`;
+/**
+ * The resource type's ID in Zenodo's vocabulary: `publication-report`, `image-figure`, `dataset`. Theses are
+ * dissertations there, and standards have a type of their own that the legacy vocabulary lacked.
+ */
+export function resourceTypeId(resourceType: ZenodoResourceType, itemType?: string): string {
+  if (itemType === 'Standard') return 'publication-standard';
+  if (resourceType.uploadType === 'publication') return resourceType.publicationType === 'thesis' ? 'publication-dissertation' : `publication-${resourceType.publicationType}`;
   if (resourceType.uploadType === 'image') return `image-${resourceType.imageType}`;
   return resourceType.uploadType;
 }

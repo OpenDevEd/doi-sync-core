@@ -31,6 +31,8 @@ interface CrossrefMappedRecordBase {
   /** The licence's address, and whether it lets anyone read the work. */
   readonly licenseUrl?: string;
   readonly freeToRead?: true;
+  /** Where the publisher is, as the record's `place` gives it. */
+  readonly publisherPlace?: string;
   readonly fullTextUrl?: string;
 }
 
@@ -172,7 +174,8 @@ function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefReco
     ...(record.relations ? { relations: record.relations } : {}),
     ...(licenseUrlOf(record.license) ? { licenseUrl: licenseUrlOf(record.license)! } : {}),
     ...(isOpenLicense(record.license) ? { freeToRead: true as const } : {}),
-    ...(record.fullTextUrl ? { fullTextUrl: record.fullTextUrl } : {})
+    ...(record.fullTextUrl ? { fullTextUrl: record.fullTextUrl } : {}),
+    ...optionalField('publisherPlace', record.fields['place'])
   };
   const organization = record.publisher ?? record.institution;
 

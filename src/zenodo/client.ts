@@ -4,7 +4,7 @@ import type { ZenodoPreparedDraft, ZenodoPublishJournalOperationType } from './j
 import type { PublicationProviderMetadata } from '../publication/record.js';
 import { asJsonObject, toJsonValue } from '../json.js';
 import type { JsonValue } from '../hash.js';
-import { buildZenodoRecordPayload, ZENODO_MANAGED_METADATA_KEYS, type DoiPolicy, type ZenodoKnownRors, type ZenodoRecordPayload } from './rdm-payload.js';
+import { buildZenodoRecordPayload, programmingLanguageId, ZENODO_MANAGED_CUSTOM_FIELDS, ZENODO_MANAGED_METADATA_KEYS, type DoiPolicy, type ZenodoKnownRors, type ZenodoRecordPayload } from './rdm-payload.js';
 import { ProviderHttpError, retryAfterMsFromHeaders, type ProviderResponseHeaders } from '../resilience/errors.js';
 import { DirectProviderOperationRunner, type ProviderOperationRunner } from '../resilience/provider-runner.js';
 import { asRecord, asString, idString } from '../guards.js';
@@ -496,12 +496,7 @@ export class ZenodoApiClient {
    * doesn't own stays as the draft has it: access, files, communities and other custom fields. Answers what it wrote.
    */
   private async writeDraftMetadata(token: string, recordId: string, input: ZenodoCreateRecordInput | ZenodoUpdateRecordMetadataInput): Promise<ZenodoRecordPayload> {
-    const managed = buildZenodoRecordPayload({
-      doiPolicy: input.doiPolicy,
-      metadata: input.metadata,
-      ...(input.resourceUrl ? { resourceUrl: input.resourceUrl } : {}),
-      known: await this.knownRors(input.metadata)
-    });
+    const managed = await this.recordPayload(input);
     const url = `${this.endpoint}/api/records/${encodeURIComponent(recordId)}/draft`;
     const draft = asRecord(await (await this.request(url, { method: 'GET', headers: { ...authHeaders(token), Accept: ZENODO_INVENIORDM_ACCEPT } })).json()) ?? {};
     const response = await this.request(url, {
@@ -512,7 +507,7 @@ export class ZenodoApiClient {
         ...(draft['files'] ? { files: draft['files'] } : {}),
         pids: managed.pids ?? draft['pids'] ?? {},
         metadata: { ...Object.fromEntries(Object.entries(asRecord(draft['metadata']) ?? {}).filter(([key]) => !ZENODO_MANAGED_METADATA_KEYS.has(key))), ...managed.metadata },
-        custom_fields: { ...asRecord(draft['custom_fields']), ...managed.custom_fields }
+        custom_fields: { ...Object.fromEntries(Object.entries(asRecord(draft['custom_fields']) ?? {}).filter(([key]) => !ZENODO_MANAGED_CUSTOM_FIELDS.has(key))), ...managed.custom_fields }
       })
     });
     // A draft saves with what it can't take listed: refused, those are this write's error, in Zenodo's words.
@@ -523,23 +518,38 @@ export class ZenodoApiClient {
     return managed;
   }
 
-  /** RORs that Zenodo's affiliation and funder vocabularies hold, asked once each for as long as the client lives. */
-  private async knownRors(metadata: PublicationProviderMetadata): Promise<ZenodoKnownRors> {
-    const ask = async (kind: 'affiliations' | 'funders', ror: string) => {
-      const key = `${kind}/${ror}`;
+  /**
+   * What the record's metadata is written as: the InvenioRDM payload, with each vocabulary entry Zenodo lacks given by
+   * name or left out. The same record against the same vocabularies always gives the same payload, so a publish
+   * carried on from the journal can say what was written.
+   */
+  async recordPayload(input: { readonly doiPolicy: DoiPolicy; readonly metadata: PublicationProviderMetadata; readonly resourceUrl?: string }): Promise<ZenodoRecordPayload> {
+    return buildZenodoRecordPayload({
+      doiPolicy: input.doiPolicy,
+      metadata: input.metadata,
+      ...(input.resourceUrl ? { resourceUrl: input.resourceUrl } : {}),
+      known: await this.knownVocabulary(input.metadata)
+    });
+  }
+
+  /** The RORs and programming languages that Zenodo's vocabularies hold, asked once each for as long as the client lives. */
+  private async knownVocabulary(metadata: PublicationProviderMetadata): Promise<ZenodoKnownRors> {
+    const ask = async (path: string, id: string) => {
+      const key = `${path}/${id}`;
       let known = this.vocabulary.get(key);
       if (known === undefined) {
-        const response = await this.request(`${this.endpoint}/api/${kind}/${encodeURIComponent(ror)}`, { method: 'GET', headers: { Accept: 'application/json' } }, { allowedStatuses: [404] });
+        const response = await this.request(`${this.endpoint}/api/${path}/${encodeURIComponent(id)}`, { method: 'GET', headers: { Accept: 'application/json' } }, { allowedStatuses: [404] });
         known = response.status !== 404;
         this.vocabulary.set(key, known);
       }
-      return known ? [ror] : [];
+      return known ? [id] : [];
     };
-    const affiliationRors = [...new Set(metadata.creators.flatMap((creator) => (creator.affiliations ?? []).flatMap((affiliation) => affiliation.ror ?? [])))];
-    const funderRors = [...new Set((metadata.funding ?? []).flatMap((funding) => funding.funderRor ?? []))];
+    const held = async (path: string, ids: readonly string[]) => new Set((await Promise.all([...new Set(ids)].map((id) => ask(path, id)))).flat());
+    const language = metadata.fields?.['programmingLanguage'];
     return {
-      affiliations: new Set((await Promise.all(affiliationRors.map((ror) => ask('affiliations', ror)))).flat()),
-      funders: new Set((await Promise.all(funderRors.map((ror) => ask('funders', ror)))).flat())
+      affiliations: await held('affiliations', metadata.creators.flatMap((creator) => (creator.affiliations ?? []).flatMap((affiliation) => affiliation.ror ?? []))),
+      funders: await held('funders', (metadata.funding ?? []).flatMap((funding) => funding.funderRor ?? [])),
+      programmingLanguages: await held('vocabularies/code:programmingLanguages', typeof language === 'string' && language.trim() ? [programmingLanguageId(language)] : [])
     };
   }
 

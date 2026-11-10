@@ -138,11 +138,11 @@ describe('Crossref 5.5 publication XML', () => {
 	it('serializes distinct report organizations and managed type-specific metadata', () => {
 		const record = mappedRecord('Report', {
 			publisher: 'Evidence Press', institution: 'OpenDevEd',
-			fields: { ISBN: '978-1-4028-9462-6', edition: '2', reportNumber: 'R-42' }
+			fields: { ISBN: '978-1-4028-9462-6', edition: '2', reportNumber: 'R-42', place: 'London, UK' }
 		});
 		const xml = buildCrossrefPublicationXml(xmlInput(record));
 
-		expect(xml).toContain('<publisher_name>Evidence Press</publisher_name>');
+		expect(xml).toContain('<publisher><publisher_name>Evidence Press</publisher_name><publisher_place>London, UK</publisher_place></publisher>');
 		expect(xml).toContain('<institution_name>OpenDevEd</institution_name>');
 		expect(xml).toContain('<edition_number>2</edition_number>');
 		expect(xml).toContain('<isbn>978-1-4028-9462-6</isbn>');

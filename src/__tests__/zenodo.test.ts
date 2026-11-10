@@ -121,11 +121,22 @@ describe('Zenodo records', () => {
 		const journal = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'JournalArticle', fields: { publicationTitle: 'Evidence Journal', ISSN: '2049-3630', volume: '12', issue: '3', pages: '10-24' } } });
 		expect(journal.metadata['resource_type']).toEqual({ id: 'publication-article' });
 		expect(journal.custom_fields).toEqual({ 'journal:journal': { title: 'Evidence Journal', issn: '2049-3630', volume: '12', issue: '3', pages: '10-24' } });
-		const paper = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'ConferencePaper', fields: { conferenceName: 'Evidence Conference', proceedingsTitle: 'Proceedings', place: 'London, UK' } } });
-		expect(paper.custom_fields).toEqual({ 'imprint:imprint': { title: 'Proceedings', place: 'London, UK' }, 'meeting:meeting': { title: 'Evidence Conference', place: 'London, UK' } });
+		// The meeting is where the conference was held; the imprint, where its proceedings were published.
+		const paper = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'ConferencePaper', fields: { conferenceName: 'Evidence Conference', proceedingsTitle: 'Proceedings', place: 'Oxford, UK', eventPlace: 'Nairobi, Kenya' } } });
+		expect(paper.custom_fields).toEqual({ 'imprint:imprint': { title: 'Proceedings', place: 'Oxford, UK' }, 'meeting:meeting': { title: 'Evidence Conference', place: 'Nairobi, Kenya' } });
+		// Zenodo keeps theses as dissertations, and standards under a type of their own.
 		const thesis = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'Thesis', fields: { thesisType: 'PhD' } } });
+		expect(thesis.metadata['resource_type']).toEqual({ id: 'publication-dissertation' });
 		expect(thesis.custom_fields).toEqual({ 'thesis:thesis': { university: 'Open Development & Education', type: 'PhD' } });
+		expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'Standard' } }).metadata['resource_type']).toEqual({ id: 'publication-standard' });
 		expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'Map' } }).metadata['resource_type']).toEqual({ id: 'image-other' });
+		const entry = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'DictionaryEntry', fields: { dictionaryTitle: 'Evidence Dictionary', PMID: '12345678' } } });
+		expect(entry.custom_fields).toEqual({ 'imprint:imprint': { title: 'Evidence Dictionary' } });
+		expect(entry.metadata['identifiers']).toEqual([{ identifier: '12345678', scheme: 'pmid' }]);
+		// A programming language goes by Zenodo's ID, and only when its vocabulary holds it.
+		const software = (known: ReadonlySet<string>) => buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'ComputerProgram', fields: { programmingLanguage: 'Python' } }, known: { affiliations: new Set(), funders: new Set(), programmingLanguages: known } });
+		expect(software(new Set(['python'])).custom_fields).toEqual({ 'code:programmingLanguage': [{ id: 'python' }] });
+		expect(software(new Set()).custom_fields).toEqual({});
 	});
 
 	it('reads a saved payload back, and refuses one saved in the legacy deposit format', () => {

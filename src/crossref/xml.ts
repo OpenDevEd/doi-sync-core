@@ -135,7 +135,7 @@ function appendBook(
 	if (record.edition) appendTextElement(metadata, 'edition_number', record.edition);
 	appendDate(metadata, 'publication_date', record.metadata.publicationDate);
 	appendIsbnChoice(metadata, record.isbns);
-	appendPublisher(metadata, record.publisher);
+	appendPublisher(metadata, record.publisher, record.publisherPlace);
 	appendFunding(metadata, record.funding);
 	appendAccess(metadata, record);
 	appendRelations(metadata, record, relation);
@@ -155,7 +155,7 @@ function appendBookComponent(
 	if (record.edition) appendTextElement(bookMetadata, 'edition_number', record.edition);
 	appendDate(bookMetadata, 'publication_date', record.metadata.publicationDate);
 	appendIsbnChoice(bookMetadata, record.isbns);
-	appendPublisher(bookMetadata, record.publisher);
+	appendPublisher(bookMetadata, record.publisher, record.publisherPlace);
 
 	const item = book.ele('content_item', {
 		component_type: record.componentType,
@@ -187,7 +187,7 @@ function appendConferencePaper(
 	if (record.conferenceDate) appendTextElement(eventMetadata, 'conference_date', record.conferenceDate);
 	const proceedings = conference.ele('proceedings_metadata', languageAttributes(record.metadata.language));
 	appendTextElement(proceedings, 'proceedings_title', record.proceedingsTitle);
-	appendPublisher(proceedings, record.publisher);
+	appendPublisher(proceedings, record.publisher, record.publisherPlace);
 	appendDate(proceedings, 'publication_date', record.metadata.publicationDate);
 	appendIsbnChoice(proceedings, record.isbns);
 
@@ -243,7 +243,7 @@ function appendReport(
 	appendAbstract(metadata, record.metadata.abstract, record.metadata.language);
 	appendDate(metadata, 'publication_date', record.metadata.publicationDate);
 	record.isbns.forEach((isbn) => appendTextElement(metadata, 'isbn', isbn));
-	if (record.publisher) appendPublisher(metadata, record.publisher);
+	if (record.publisher) appendPublisher(metadata, record.publisher, record.publisherPlace);
 	if (record.institution) appendInstitution(metadata, record.institution);
 	appendPublisherItem(metadata, record.itemNumber);
 	appendFunding(metadata, record.funding);
@@ -273,7 +273,7 @@ function appendSeriesReport(
 	if (record.edition) appendTextElement(metadata, 'edition_number', record.edition);
 	appendDate(metadata, 'publication_date', record.metadata.publicationDate);
 	record.isbns.forEach((isbn) => appendTextElement(metadata, 'isbn', isbn));
-	if (record.publisher) appendPublisher(metadata, record.publisher);
+	if (record.publisher) appendPublisher(metadata, record.publisher, record.publisherPlace);
 	if (record.institution) appendInstitution(metadata, record.institution);
 	appendPublisherItem(metadata, record.itemNumber);
 	appendFunding(metadata, record.funding);
@@ -299,7 +299,7 @@ function appendStandard(
 	if (record.edition) appendTextElement(metadata, 'edition_number', record.edition);
 	appendDate(metadata, 'approval_date', record.metadata.publicationDate);
 	record.isbns.forEach((isbn) => appendTextElement(metadata, 'isbn', isbn));
-	if (record.publisher) appendPublisher(metadata, record.publisher);
+	if (record.publisher) appendPublisher(metadata, record.publisher, record.publisherPlace);
 	const bodyElement = metadata.ele('standards_body');
 	appendTextElement(bodyElement, 'standards_body_name', record.standardsBody);
 	appendTextElement(bodyElement, 'standards_body_acronym', record.standardsBodyAcronym);
@@ -318,7 +318,7 @@ function appendDataset(
 	const database = body.ele('database');
 	const databaseMetadata = database.ele('database_metadata', languageAttributes(record.metadata.language));
 	appendTitles(databaseMetadata, record.databaseTitle);
-	if (record.publisher) appendPublisher(databaseMetadata, record.publisher);
+	if (record.publisher) appendPublisher(databaseMetadata, record.publisher, record.publisherPlace);
 	if (record.institution) appendInstitution(databaseMetadata, record.institution);
 
 	const dataset = database.ele('dataset', { dataset_type: 'record' });
@@ -380,8 +380,10 @@ function appendDate(parent: XMLBuilder, elementName: string, date: string): void
 	appendTextElement(element, 'year', parts.year);
 }
 
-function appendPublisher(parent: XMLBuilder, publisher: string): void {
-	appendTextElement(parent.ele('publisher'), 'publisher_name', publisher);
+function appendPublisher(parent: XMLBuilder, publisher: string, place?: string): void {
+	const element = parent.ele('publisher');
+	appendTextElement(element, 'publisher_name', publisher);
+	if (place) appendTextElement(element, 'publisher_place', place);
 }
 
 function appendInstitution(parent: XMLBuilder, institution: string): void {

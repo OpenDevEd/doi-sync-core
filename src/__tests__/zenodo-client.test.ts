@@ -1037,7 +1037,7 @@ describe('ZenodoApiClient', () => {
             access: { record: 'public', files: 'public' }, files: { enabled: true },
             pids: { doi: { identifier: '10.5072/zenodo.502440', provider: 'datacite' } },
             metadata: { title: 'Old title', custom_provider_field: 'preserve me', subjects: [{ subject: 'stale' }] },
-            custom_fields: { 'code:codeRepository': 'https://example.org/provider-owned' }
+            custom_fields: { 'code:codeRepository': 'https://example.org/provider-owned', 'journal:journal': { title: 'Stale journal' } }
           }));
         }
         if (url.endsWith('/api/records/502440/draft') && init.method === 'PUT') {
@@ -1068,6 +1068,7 @@ describe('ZenodoApiClient', () => {
       custom_fields: { 'code:codeRepository': 'https://example.org/provider-owned' }
     });
     expect(writtenPayload).not.toHaveProperty('metadata.subjects');
+    expect(writtenPayload).not.toHaveProperty(['custom_fields', 'journal:journal']);
     expect(draft.payloadSnapshot).toEqual(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata }));
     expect(draft.payloadSnapshot).not.toHaveProperty('metadata.custom_provider_field');
   });
