@@ -26,7 +26,7 @@ const output = [
 	'// Generated from https://zenodo.org/api/vocabularies/licenses. Do not edit.',
 	`export const ZENODO_LICENSE_IDS: ReadonlySet<string> = new Set(${JSON.stringify(sortedIds)});`,
 	`/** Each licence's address, by its Zenodo ID, where the vocabulary gives one. */`,
-	`export const ZENODO_LICENSE_URLS: Readonly<Record<string, string>> = ${JSON.stringify(urls)};`,
+	`export const ZENODO_LICENSE_URLS: Readonly<Record<string, string>> = ${JSON.stringify(urls, null, '\t')};`,
 	''
 ].join('\n');
 writeFileSync(new URL('../src/zenodo/licenses.ts', import.meta.url), output);
