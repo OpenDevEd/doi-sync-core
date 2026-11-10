@@ -1,19 +1,19 @@
 import { create } from 'xmlbuilder2';
 import type { XMLBuilder } from 'xmlbuilder2/lib/interfaces.js';
 
-import type { PublicationCreator } from '../publication/record.js';
+import type {
+	PublicationCreator,
+	PublicationFunding,
+	PublicationIdentifierType,
+	PublicationRelation,
+	PublicationRelationType
+} from '../publication/record.js';
 import { crossrefContributorRole } from './contributors.js';
-import type { CrossrefMappedRecord, CrossrefPages } from './record-mapper.js';
+import type { CrossrefMappedRecord, CrossrefPages, CrossrefSeries } from './record-mapper.js';
 
-export type CrossrefRelationType = 'isSupplementedBy' | 'references' | 'hasVersion' | 'isRelatedMaterial';
-export type CrossrefIdentifierType = 'doi' | 'uri' | 'ark' | 'handle' | 'uuid' | 'other';
-
-export interface CrossrefRelation {
-	readonly type: CrossrefRelationType;
-	readonly identifierType: CrossrefIdentifierType;
-	readonly identifier: string;
-	readonly description?: string;
-}
+export type CrossrefRelationType = PublicationRelationType;
+export type CrossrefIdentifierType = PublicationIdentifierType;
+export type CrossrefRelation = PublicationRelation;
 
 export type CrossrefDepositRelation = CrossrefRelation | 'delete-all';
 
@@ -38,6 +38,7 @@ export function buildCrossrefPublicationXml(input: CrossrefXmlInput): string {
 		'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
 		'xmlns:jats': 'http://www.ncbi.nlm.nih.gov/JATS1',
 		'xmlns:rel': 'http://www.crossref.org/relations.xsd',
+		'xmlns:fr': 'http://www.crossref.org/fundref.xsd',
 		'xsi:schemaLocation': 'http://www.crossref.org/schema/5.5.0 https://www.crossref.org/schemas/crossref5.5.0.xsd'
 	});
 
@@ -109,8 +110,10 @@ function appendJournalArticle(
 	appendAbstract(article, record.metadata.abstract, record.metadata.language);
 	appendDate(article, 'publication_date', record.metadata.publicationDate);
 	appendPages(article, record.pages);
-	appendRelation(article, relation);
+	appendFunding(article, record.funding);
+	appendRelations(article, record, relation);
 	appendDoiData(article, record.metadata.doi, record.landingUrl);
+	appendCitations(article, record.references);
 }
 
 function appendBook(
@@ -129,8 +132,10 @@ function appendBook(
 	appendDate(metadata, 'publication_date', record.metadata.publicationDate);
 	appendIsbnChoice(metadata, record.isbns);
 	appendPublisher(metadata, record.publisher);
-	appendRelation(metadata, relation);
+	appendFunding(metadata, record.funding);
+	appendRelations(metadata, record, relation);
 	appendDoiData(metadata, record.metadata.doi, record.landingUrl);
+	appendCitations(metadata, record.references);
 }
 
 function appendBookComponent(
@@ -157,8 +162,10 @@ function appendBookComponent(
 	if (record.componentNumber) appendTextElement(item, 'component_number', record.componentNumber);
 	appendDate(item, 'publication_date', record.metadata.publicationDate);
 	appendPages(item, record.pages);
-	appendRelation(item, relation);
+	appendFunding(item, record.funding);
+	appendRelations(item, record, relation);
 	appendDoiData(item, record.metadata.doi, record.landingUrl);
+	appendCitations(item, record.references);
 }
 
 function appendConferencePaper(
@@ -184,8 +191,10 @@ function appendConferencePaper(
 	appendAbstract(paper, record.metadata.abstract, record.metadata.language);
 	appendDate(paper, 'publication_date', record.metadata.publicationDate);
 	appendPages(paper, record.pages);
-	appendRelation(paper, relation);
+	appendFunding(paper, record.funding);
+	appendRelations(paper, record, relation);
 	appendDoiData(paper, record.metadata.doi, record.landingUrl);
+	appendCitations(paper, record.references);
 }
 
 function appendDissertation(
@@ -201,8 +210,10 @@ function appendDissertation(
 	appendInstitution(dissertation, record.institution);
 	if (record.degree) appendTextElement(dissertation, 'degree', record.degree);
 	record.isbns.forEach((isbn) => appendTextElement(dissertation, 'isbn', isbn));
-	appendRelation(dissertation, relation);
+	appendFunding(dissertation, record.funding);
+	appendRelations(dissertation, record, relation);
 	appendDoiData(dissertation, record.metadata.doi, record.landingUrl);
+	appendCitations(dissertation, record.references);
 }
 
 function appendReport(
@@ -210,6 +221,10 @@ function appendReport(
 	record: Extract<CrossrefMappedRecord, { readonly kind: 'report' }>,
 	relation: CrossrefDepositRelation | undefined
 ): void {
+	if (record.series) {
+		appendSeriesReport(body, record, record.series, relation);
+		return;
+	}
 	const metadata = body.ele('report-paper').ele(
 		'report-paper_metadata',
 		languageAttributes(record.metadata.language)
@@ -223,8 +238,39 @@ function appendReport(
 	if (record.publisher) appendPublisher(metadata, record.publisher);
 	if (record.institution) appendInstitution(metadata, record.institution);
 	appendPublisherItem(metadata, record.itemNumber);
-	appendRelation(metadata, relation);
+	appendFunding(metadata, record.funding);
+	appendRelations(metadata, record, relation);
 	appendDoiData(metadata, record.metadata.doi, record.landingUrl);
+	appendCitations(metadata, record.references);
+}
+
+/** A report in a series with an ISSN. The schema orders this container differently: no edition before the abstract, and its relations come last. */
+function appendSeriesReport(
+	body: XMLBuilder,
+	record: Extract<CrossrefMappedRecord, { readonly kind: 'report' }>,
+	series: CrossrefSeries,
+	relation: CrossrefDepositRelation | undefined
+): void {
+	const metadata = body.ele('report-paper').ele(
+		'report-paper_series_metadata',
+		languageAttributes(record.metadata.language)
+	);
+	const seriesMetadata = metadata.ele('series_metadata');
+	appendTitles(seriesMetadata, series.title);
+	series.issns.forEach((issn) => appendTextElement(seriesMetadata, 'issn', issn));
+	appendContributors(metadata, record.metadata.creators);
+	appendTitles(metadata, record.metadata.title);
+	appendAbstract(metadata, record.metadata.abstract, record.metadata.language);
+	if (record.edition) appendTextElement(metadata, 'edition_number', record.edition);
+	appendDate(metadata, 'publication_date', record.metadata.publicationDate);
+	record.isbns.forEach((isbn) => appendTextElement(metadata, 'isbn', isbn));
+	if (record.publisher) appendPublisher(metadata, record.publisher);
+	if (record.institution) appendInstitution(metadata, record.institution);
+	appendPublisherItem(metadata, record.itemNumber);
+	appendFunding(metadata, record.funding);
+	appendDoiData(metadata, record.metadata.doi, record.landingUrl);
+	appendCitations(metadata, record.references);
+	appendRelations(metadata, record, relation);
 }
 
 function appendStandard(
@@ -247,8 +293,10 @@ function appendStandard(
 	const bodyElement = metadata.ele('standards_body');
 	appendTextElement(bodyElement, 'standards_body_name', record.standardsBody);
 	appendTextElement(bodyElement, 'standards_body_acronym', record.standardsBodyAcronym);
-	appendRelation(metadata, relation);
+	appendFunding(metadata, record.funding);
+	appendRelations(metadata, record, relation);
 	appendDoiData(metadata, record.metadata.doi, record.landingUrl);
+	appendCitations(metadata, record.references);
 }
 
 function appendDataset(
@@ -268,9 +316,11 @@ function appendDataset(
 	const databaseDate = dataset.ele('database_date');
 	appendDate(databaseDate, 'publication_date', record.metadata.publicationDate);
 	if (record.metadata.abstract) appendTextElement(dataset, 'description', record.metadata.abstract);
-	appendRelation(dataset, relation);
+	appendFunding(dataset, record.funding);
+	appendRelations(dataset, record, relation);
 	appendVersionInfo(dataset, record.version);
 	appendDoiData(dataset, record.metadata.doi, record.landingUrl);
+	appendCitations(dataset, record.references);
 }
 
 function appendPostedContent(
@@ -289,8 +339,10 @@ function appendPostedContent(
 	appendInstitution(posted, record.hostingIdentity);
 	if (record.itemNumber) appendTextElement(posted, 'item_number', record.itemNumber);
 	appendAbstract(posted, record.metadata.abstract, record.metadata.language);
-	appendRelation(posted, relation);
+	appendFunding(posted, record.funding);
+	appendRelations(posted, record, relation);
 	appendDoiData(posted, record.metadata.doi, record.landingUrl);
+	appendCitations(posted, record.references);
 }
 
 function appendTitles(parent: XMLBuilder, title: string): void {
@@ -384,20 +436,51 @@ function appendContributors(
 	});
 }
 
-function appendRelation(parent: XMLBuilder, relation: CrossrefDepositRelation | undefined): void {
-	if (!relation) return;
+function appendFunding(parent: XMLBuilder, funding: readonly PublicationFunding[] | undefined): void {
+	if (!funding?.length) return;
+	const program = parent.ele('fr:program', { name: 'fundref' });
+	for (const funder of funding) {
+		const group = program.ele('fr:assertion', { name: 'fundgroup' });
+		const name = group.ele('fr:assertion', { name: 'funder_name' }).txt(sanitizeXmlText(funder.funderName));
+		if (funder.funderIdentifier) {
+			name.ele('fr:assertion', { name: 'funder_identifier' }).txt(sanitizeXmlText(funder.funderIdentifier));
+		}
+		funder.awards.forEach((award) => group.ele('fr:assertion', { name: 'award_number' }).txt(sanitizeXmlText(award)));
+	}
+}
+
+/**
+ * The record's own relations and the deposit's (the archived file package), or an empty program that clears them all.
+ * Another version of the same work is an intra-work relation in Crossref's schema; the rest relate other works.
+ */
+function appendRelations(
+	parent: XMLBuilder,
+	record: Pick<CrossrefMappedRecord, 'relations'>,
+	relation: CrossrefDepositRelation | undefined
+): void {
 	if (relation === 'delete-all') {
 		parent.ele('rel:program');
 		return;
 	}
-	const relatedItem = parent.ele('rel:program').ele('rel:related_item');
-	if (relation.description) appendTextElement(relatedItem, 'rel:description', relation.description);
-	relatedItem
-		.ele('rel:inter_work_relation', {
-			'relationship-type': relation.type,
-			'identifier-type': relation.identifierType
-		})
-		.txt(sanitizeXmlText(relation.identifier));
+	const relations = [...(record.relations ?? []), ...(relation ? [relation] : [])];
+	if (relations.length === 0) return;
+	const program = parent.ele('rel:program');
+	for (const item of relations) {
+		const relatedItem = program.ele('rel:related_item');
+		if (item.description) appendTextElement(relatedItem, 'rel:description', item.description);
+		relatedItem
+			.ele(item.type === 'hasVersion' ? 'rel:intra_work_relation' : 'rel:inter_work_relation', {
+				'relationship-type': item.type,
+				'identifier-type': item.identifierType
+			})
+			.txt(sanitizeXmlText(item.identifier));
+	}
+}
+
+function appendCitations(parent: XMLBuilder, references: readonly string[] | undefined): void {
+	if (!references?.length) return;
+	const list = parent.ele('citation_list');
+	references.forEach((doi, index) => appendTextElement(list.ele('citation', { key: `ref${index + 1}` }), 'doi', doi));
 }
 
 function splitDate(date: string): { readonly year: string; readonly month?: string; readonly day?: string } {

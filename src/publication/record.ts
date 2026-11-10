@@ -21,6 +21,26 @@ export interface PublicationCreator {
   readonly orcid?: string | undefined;
 }
 
+export const PUBLICATION_RELATION_TYPES = ['isSupplementedBy', 'references', 'hasVersion', 'isRelatedMaterial'] as const;
+export type PublicationRelationType = (typeof PUBLICATION_RELATION_TYPES)[number];
+export const PUBLICATION_IDENTIFIER_TYPES = ['doi', 'uri', 'ark', 'handle', 'uuid', 'other'] as const;
+export type PublicationIdentifierType = (typeof PUBLICATION_IDENTIFIER_TYPES)[number];
+
+/** Another work this one points at: its data, code, another version, a supplement. */
+export interface PublicationRelation {
+  readonly type: PublicationRelationType;
+  readonly identifierType: PublicationIdentifierType;
+  readonly identifier: string;
+  readonly description?: string | undefined;
+}
+
+/** One funder of the work, with its identifier in the Crossref Funder Registry (`https://doi.org/10.13039/…`) when known. */
+export interface PublicationFunding {
+  readonly funderName: string;
+  readonly funderIdentifier?: string | undefined;
+  readonly awards: readonly string[];
+}
+
 export interface PublicationMetadata {
   readonly itemType: string;
   readonly title: string;
@@ -33,6 +53,10 @@ export interface PublicationMetadata {
   readonly license?: string | undefined;
   readonly creators: readonly PublicationCreator[];
   readonly tags: readonly string[];
+  readonly funding?: readonly PublicationFunding[] | undefined;
+  /** DOIs the work cites. */
+  readonly references?: readonly string[] | undefined;
+  readonly relations?: readonly PublicationRelation[] | undefined;
 }
 
 /** Provider-ready metadata. Zenodo minting does not have a DOI before publication. */
@@ -69,6 +93,19 @@ export const publicationCreatorSchema: z.ZodType<PublicationCreator> = z.object(
   orcid: nonEmptyString.optional()
 }).strict();
 
+const publicationFundingSchema: z.ZodType<PublicationFunding> = z.object({
+  funderName: nonEmptyString,
+  funderIdentifier: nonEmptyString.optional(),
+  awards: z.array(nonEmptyString)
+}).strict();
+
+const publicationRelationSchema: z.ZodType<PublicationRelation> = z.object({
+  type: z.enum(PUBLICATION_RELATION_TYPES),
+  identifierType: z.enum(PUBLICATION_IDENTIFIER_TYPES),
+  identifier: nonEmptyString,
+  description: nonEmptyString.optional()
+}).strict();
+
 const publicationMetadataShape = {
   itemType: nonEmptyString,
   title: nonEmptyString,
@@ -80,7 +117,10 @@ const publicationMetadataShape = {
   rights: nonEmptyString.optional(),
   license: nonEmptyString.optional(),
   creators: z.array(publicationCreatorSchema),
-  tags: z.array(nonEmptyString)
+  tags: z.array(nonEmptyString),
+  funding: z.array(publicationFundingSchema).optional(),
+  references: z.array(nonEmptyString).optional(),
+  relations: z.array(publicationRelationSchema).optional()
 };
 
 export const publicationMetadataSchema = z.object(publicationMetadataShape).strict() satisfies z.ZodType<PublicationMetadata>;

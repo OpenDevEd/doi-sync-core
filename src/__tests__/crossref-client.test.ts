@@ -506,6 +506,57 @@ describe('CrossrefApiClient', () => {
     expect(calls[2]?.init.method).toBe('GET');
   });
 
+  it('matches a series report only once its series, ISSN and every relation read back', async () => {
+    const unixref = (relations: string) => `
+      <doi_records>
+        <doi_record owner="10.53832" timestamp="2026-05-22 11:18:58">
+          <crossref>
+            <report-paper>
+              <report-paper_series_metadata>
+                <series_metadata><titles><title>Openscholar Reports</title></titles><issn>2049-3630</issn></series_metadata>
+                <titles><title>Evidence report</title></titles>
+                <publication_date media_type="online"><month>05</month><day>20</day><year>2026</year></publication_date>
+                <publisher><publisher_name>Openscholar</publisher_name></publisher>
+                <institution><institution_name>Openscholar Reports</institution_name></institution>
+                <doi_data>
+                  <doi>10.53832/opendeved.1205</doi>
+                  <resource>https://openscholar.ai/papers/R100001</resource>
+                </doi_data>
+                <program xmlns="http://www.crossref.org/relations.xsd">${relations}</program>
+              </report-paper_series_metadata>
+            </report-paper>
+          </crossref>
+        </doi_record>
+      </doi_records>`;
+    const code = '<related_item><description>Code</description><inter_work_relation relationship-type="isSupplementedBy" identifier-type="uri">https://github.com/example/code</inter_work_relation></related_item>';
+    const version = '<related_item><description>Other version</description><intra_work_relation relationship-type="hasVersion" identifier-type="doi">10.1000/earlier</intra_work_relation></related_item>';
+    const verify = (body: string) => new CrossrefApiClient({
+      fetch: () => Promise.resolve(textResponse(body)),
+      poll: { maxAttempts: 1, delayMs: 0 }
+    }).verifyPublication({
+      environment: 'test',
+      emailAddress: 'depositor@example.org',
+      record: {
+        kind: 'report',
+        metadata: {
+          doi: '10.53832/opendeved.1205', title: 'Evidence report', publicationDate: '2026-05-20', creators: []
+        },
+        landingUrl: 'https://openscholar.ai/papers/R100001',
+        publisher: 'Openscholar',
+        institution: 'Openscholar Reports',
+        isbns: [],
+        series: { title: 'Openscholar Reports', issns: ['2049-3630'] },
+        relations: [
+          { type: 'isSupplementedBy', identifierType: 'uri', identifier: 'https://github.com/example/code', description: 'Code' },
+          { type: 'hasVersion', identifierType: 'doi', identifier: '10.1000/earlier', description: 'Other version' }
+        ]
+      }
+    });
+
+    await expect(verify(unixref(code + version))).resolves.toMatchObject({ status: 'matched' });
+    await expect(verify(unixref(code))).resolves.toMatchObject({ status: 'pending', reason: expect.stringContaining('relation=missing') });
+  });
+
   it('verifies pending test deposits against the Crossref test XML API', async () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: CrossrefFetchLike = (url, init) => {

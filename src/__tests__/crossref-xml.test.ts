@@ -50,6 +50,10 @@ describe('Crossref 5.5 publication XML', () => {
 		const report = mappedRecord('Report');
 		const xmlDocuments = [
 			...itemTypes.map((itemType) => buildCrossrefPublicationXml(xmlInput(mappedRecord(itemType)))),
+			// Funding, references and relations sit somewhere else in each family's container.
+			...itemTypes.map((itemType) => buildCrossrefPublicationXml(xmlInput(mappedRecord(itemType, WORK_DETAILS), ARCHIVE_RELATION))),
+			buildCrossrefPublicationXml(xmlInput(seriesReport(), ARCHIVE_RELATION)),
+			buildCrossrefPublicationXml(xmlInput(seriesReport(), 'delete-all')),
 			buildCrossrefPublicationXml(xmlInput(report, {
 				type: 'isSupplementedBy', identifierType: 'doi', identifier: '10.5281/zenodo.15043088'
 			})),
@@ -93,6 +97,21 @@ describe('Crossref 5.5 publication XML', () => {
 		expect(xml).toContain('<ORCID>https://orcid.org/0000-0002-1825-0097</ORCID>');
 	});
 
+	it('deposits a work\'s funders, cited DOIs and relations beside the archive link', () => {
+		const xml = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', WORK_DETAILS), ARCHIVE_RELATION));
+
+		expect(xml).toContain('<fr:assertion name="funder_name">National Science Foundation<fr:assertion name="funder_identifier">https://doi.org/10.13039/100000001</fr:assertion></fr:assertion><fr:assertion name="award_number">CHE-1152342</fr:assertion><fr:assertion name="award_number">CBET-106</fr:assertion>');
+		expect(xml).toContain('<citation key="ref1"><doi>10.1000/cited.1</doi></citation><citation key="ref2"><doi>10.1000/cited.2</doi></citation>');
+		expect(xml.match(/<rel:related_item>/g)).toHaveLength(3);
+	});
+
+	it('deposits a report in a series with an ISSN as series metadata', () => {
+		const xml = buildCrossrefPublicationXml(xmlInput(seriesReport()));
+
+		expect(xml).toContain('<report-paper_series_metadata language="en"><series_metadata><titles><title>Openscholar Reports</title></titles><issn>2049-3630</issn></series_metadata>');
+		expect(xml).not.toContain('<report-paper_metadata');
+	});
+
 	it('serializes distinct report organizations and managed type-specific metadata', () => {
 		const record = mappedRecord('Report', {
 			publisher: 'Evidence Press', institution: 'OpenDevEd',
@@ -107,6 +126,29 @@ describe('Crossref 5.5 publication XML', () => {
 		expect(xml).toContain('<publisher_item><item_number>R-42</item_number></publisher_item>');
 	});
 });
+
+const WORK_DETAILS = {
+	funding: [
+		{ funderName: 'National Science Foundation', funderIdentifier: 'https://doi.org/10.13039/100000001', awards: ['CHE-1152342', 'CBET-106'] },
+		{ funderName: 'A funder with no identifier', awards: [] }
+	],
+	references: ['https://doi.org/10.1000/Cited.1', '10.1000/cited.2'],
+	relations: [
+		{ type: 'isSupplementedBy', identifierType: 'uri', identifier: 'https://github.com/example/code', description: 'Code' },
+		{ type: 'hasVersion', identifierType: 'doi', identifier: '10.1000/earlier', description: 'Other version' }
+	]
+} satisfies Partial<PublicationRecordSnapshot>;
+
+const ARCHIVE_RELATION = {
+	type: 'isSupplementedBy', identifierType: 'doi', identifier: '10.5281/zenodo.15043088', description: 'Archived file package'
+} as const;
+
+function seriesReport(): CrossrefMappedRecord {
+	return mappedRecord('Report', {
+		...WORK_DETAILS,
+		fields: { reportNumber: 'R100001', seriesTitle: 'Openscholar Reports', ISSN: '2049-3630' }
+	});
+}
 
 function xmlInput(record: CrossrefMappedRecord, relation?: Parameters<typeof buildCrossrefPublicationXml>[0]['relation']) {
 	return {

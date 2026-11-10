@@ -274,12 +274,15 @@ export class CrossrefApiClient {
       });
       lastVerification = metadataVerification;
       if (metadataVerification.status !== 'matched') continue;
-      if (!input.relation) return metadataVerification;
+      const relations = input.relation === 'delete-all'
+        ? 'delete-all' as const
+        : [...(input.record.relations ?? []), ...(input.relation ? [input.relation] : [])];
+      if (relations !== 'delete-all' && relations.length === 0) return metadataVerification;
       if (!metadataVerification.record) continue;
 
-      lastVerification = verifyXmlApiRelation({
+      lastVerification = verifyXmlApiRelations({
         record: metadataVerification.record,
-        relation: input.relation
+        relations
       });
       if (lastVerification.status === 'matched') return lastVerification;
     }
@@ -491,7 +494,9 @@ function expectedTypeDetails(record: CrossrefMappedRecord): {
   readonly groupTitle: string | null;
 } {
   return {
-    issns: record.kind === 'journal-article' ? normalizeStringArray(record.issns) : [],
+    issns: record.kind === 'journal-article'
+      ? normalizeStringArray(record.issns)
+      : record.kind === 'report' ? normalizeStringArray(record.series?.issns ?? []) : [],
     isbns: 'isbns' in record ? normalizeStringArray(record.isbns) : [],
     volume: record.kind === 'journal-article' ? normalizeText(record.volume) : null,
     issue: record.kind === 'journal-article' ? normalizeText(record.issue) : null,
@@ -538,6 +543,8 @@ function expectedContainerTitle(record: CrossrefMappedRecord): string | undefine
       return record.journalTitle;
     case 'book-component':
       return record.bookTitle;
+    case 'report':
+      return record.series?.title;
     case 'conference-paper':
       return record.proceedingsTitle;
     case 'dataset':
@@ -547,11 +554,11 @@ function expectedContainerTitle(record: CrossrefMappedRecord): string | undefine
   }
 }
 
-function verifyXmlApiRelation(input: {
+function verifyXmlApiRelations(input: {
   readonly record: CrossrefUnixrefRecord;
-  readonly relation: CrossrefDepositRelation;
+  readonly relations: readonly CrossrefRelation[] | 'delete-all';
 }): CrossrefXmlApiVerification {
-  if (input.relation === 'delete-all') {
+  if (input.relations === 'delete-all') {
     return (input.record.relations?.length ?? 0) === 0
       ? { status: 'matched', record: input.record }
       : {
@@ -559,7 +566,7 @@ function verifyXmlApiRelation(input: {
           reason: 'Crossref XML API metadata has not caught up: relations=not-cleared'
         };
   }
-  if (hasExpectedRelation(input.record.relations ?? [], input.relation)) {
+  if (input.relations.every((relation) => hasExpectedRelation(input.record.relations ?? [], relation))) {
     return {
       status: 'matched',
       record: input.record

@@ -259,10 +259,15 @@ function findPublicationContainer(crossref: Record<string, unknown>): CrossrefPu
     };
   }
   const report = firstRecord(crossref['report-paper']);
-  const reportMetadata = asRecord(report?.['report-paper_metadata']);
+  const reportMetadata = asRecord(report?.['report-paper_metadata']) ?? asRecord(report?.['report-paper_series_metadata']);
   if (reportMetadata) {
+    const series = asRecord(reportMetadata['series_metadata']);
     return {
       kind: 'report', metadata: reportMetadata,
+      ...(series ? {
+        ...optionalString('containerTitle', asRecord(series['titles'])?.['title']),
+        ...optionalTextValues('issns', series['issn'])
+      } : {}),
       ...optionalPublisher(reportMetadata), ...optionalInstitution(reportMetadata),
       ...optionalTextValues('isbns', reportMetadata['isbn']),
       ...optionalString('edition', reportMetadata['edition_number']),
