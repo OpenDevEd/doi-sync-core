@@ -554,7 +554,7 @@ describe('CrossrefApiClient', () => {
     });
 
     await expect(verify(unixref(code + version))).resolves.toMatchObject({ status: 'matched' });
-    await expect(verify(unixref(code))).resolves.toMatchObject({ status: 'pending', reason: expect.stringContaining('relation=missing') });
+    await expect(verify(unixref(code))).resolves.toMatchObject({ status: 'pending', reason: 'Crossref XML API metadata has not caught up: relation=missing' });
   });
 
   it('verifies pending test deposits against the Crossref test XML API', async () => {
