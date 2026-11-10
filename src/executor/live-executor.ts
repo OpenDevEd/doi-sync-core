@@ -43,8 +43,9 @@ import type {
 	ZenodoPreparedDraft,
 	ZenodoPublishJournalOperationType
 } from '../zenodo/journal.js';
+import { toJsonValue } from '../json.js';
+import type { DoiPolicy, ZenodoRecordPayload } from '../zenodo/rdm-payload.js';
 import type {
-	DoiPolicy,
 	ZenodoDoiLookupResult,
 	ZenodoRecordIdentifiers
 } from '../zenodo/records.js';
@@ -109,6 +110,12 @@ export interface ZenodoWriter {
 		readonly token: string;
 		readonly depositionId: string;
 	}) => Promise<void>;
+	/** The payload a write of this record makes, as the provider resolves it: what a publish carried on from the journal wrote. */
+	readonly recordPayload?: (input: {
+		readonly doiPolicy: DoiPolicy;
+		readonly metadata: PublicationProviderMetadata;
+		readonly resourceUrl?: string;
+	}) => Promise<ZenodoRecordPayload>;
 	readonly discardPreparedDraft: (input: {
 		readonly token: string;
 		readonly operationType: ZenodoPublishJournalOperationType;
@@ -463,16 +470,19 @@ function zenodoBaseInput(
 	plan: WriteRequiredPublicationSyncPlan,
 	onPreparedDraft: (draft: ZenodoPreparedDraft) => Promise<void>
 ): PrepareZenodoBaseInput {
+	return { token: requireZenodoToken(input), ...zenodoRecordRequest(plan), onPreparedDraft };
+}
+
+/** The record a Zenodo write sends: its metadata, the DOI policy and the record's own page. */
+function zenodoRecordRequest(plan: WriteRequiredPublicationSyncPlan) {
 	return {
-		token: requireZenodoToken(input),
 		doiPolicy: zenodoDoiPolicy(plan.targets),
 		metadata: buildZenodoProviderMetadata({
 			record: plan.record,
 			identifiers: plan.identifiers,
 			identifierPolicy: requireZenodoTarget(plan).identifierPolicy
 		}),
-		resourceUrl: plan.record.landingUrl,
-		onPreparedDraft
+		resourceUrl: plan.record.landingUrl
 	};
 }
 
@@ -559,6 +569,9 @@ async function publishJournaledDraft(
 	if (fileCorrectionDeadlinePassed(operation, observedAt)) {
 		return discardExpiredFileCorrection(input, plan, operation.type, draft, observedAt);
 	}
+	// What the journaled write put in the draft, when the plan's record is the one it wrote: resolved against Zenodo's
+	// vocabularies as the write was, so a later audit compares with what Zenodo holds.
+	const written = await journaledPayload(input, plan, operation);
 	try {
 		const identifiers = await requireZenodoProvider(input).publishDraft({
 			token: requireZenodoToken(input),
@@ -568,6 +581,7 @@ async function publishJournaledDraft(
 		return {
 			type: operation.type,
 			status: 'succeeded',
+			...(written ? { zenodoPayloadSnapshot: toJsonValue(written) } : {}),
 			zenodoPublishedAt: identifiers.publishedAt,
 			zenodo: toSettlementIdentifiers(identifiers)
 		};
@@ -583,6 +597,7 @@ async function publishJournaledDraft(
 			return {
 				type: operation.type,
 				status: 'succeeded',
+				...(written ? { zenodoPayloadSnapshot: toJsonValue(written) } : {}),
 				zenodoAdoptionOnly: true,
 				zenodoPublishedAt: alreadyPublished.publishedAt,
 				zenodo: toSettlementIdentifiers(alreadyPublished)
@@ -599,6 +614,16 @@ async function publishJournaledDraft(
 		const cleanup = await cleanupOrphanCreateDraft(input, plan, orphanDraftCleanup);
 		return withCleanup(recovered.result, cleanup);
 	}
+}
+
+async function journaledPayload(
+	input: ExecuteLivePublicationSyncPlanInput,
+	plan: WriteRequiredPublicationSyncPlan,
+	operation: Extract<ZenodoSyncOperation, { readonly type: 'zenodo_publish_journaled_draft' }>
+): Promise<ZenodoRecordPayload | undefined> {
+	const provider = requireZenodoProvider(input);
+	if (!provider.recordPayload || operation.originalOperationType === 'zenodo_file_update' || operation.payloadHash !== plan.hashes.zenodoPayloadHash) return undefined;
+	return provider.recordPayload(zenodoRecordRequest(plan));
 }
 
 function journalPreparingDraft(

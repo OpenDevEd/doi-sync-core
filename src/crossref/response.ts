@@ -67,7 +67,7 @@ export interface CrossrefUnixrefCreator {
   readonly creatorType?: string;
   readonly givenName?: string;
   readonly familyName?: string;
-  readonly affiliation?: string;
+  readonly affiliations?: readonly string[];
   readonly orcid?: string;
 }
 
@@ -429,9 +429,7 @@ function parsePersonName(person: Record<string, unknown>): readonly CrossrefUnix
   const givenName = textValue(person['given_name']);
   const familyName = textValue(person['surname']);
   const name = [familyName, givenName].filter((part): part is string => Boolean(part)).join(', ');
-  const affiliation = textValue(
-    asRecord(asRecord(person['affiliations'])?.['institution'])?.['institution_name']
-  );
+  const affiliations = records(asRecord(person['affiliations'])?.['institution']).flatMap((institution) => textValue(institution['institution_name']) ?? []);
   const orcid = textValue(person['ORCID']);
   if (!name) return [];
 
@@ -441,7 +439,7 @@ function parsePersonName(person: Record<string, unknown>): readonly CrossrefUnix
     creatorType: crossrefContributorRole(textValue(person['@_contributor_role']) ?? undefined),
     ...(givenName ? { givenName } : {}),
     ...(familyName ? { familyName } : {}),
-    ...(affiliation ? { affiliation } : {}),
+    ...(affiliations.length ? { affiliations } : {}),
     ...(orcid ? { orcid } : {})
   }];
 }

@@ -1,5 +1,6 @@
 import type { JsonValue } from '../hash.js';
 import { normalizeDoi } from '../doi.js';
+import { isOpenLicense, licenseUrlOf } from '../publication/licenses.js';
 import type {
   PublicationCreator,
   PublicationFunding,
@@ -27,6 +28,12 @@ interface CrossrefMappedRecordBase {
   /** DOIs the work cites, normalized. */
   readonly references?: readonly string[];
   readonly relations?: readonly PublicationRelation[];
+  /** The licence's address, and whether it lets anyone read the work. */
+  readonly licenseUrl?: string;
+  readonly freeToRead?: true;
+  /** Where the publisher is, as the record's `place` gives it. */
+  readonly publisherPlace?: string;
+  readonly fullTextUrl?: string;
 }
 
 /** The series a report is one of, deposited as `report-paper_series_metadata` once it has an ISSN. */
@@ -37,6 +44,7 @@ export interface CrossrefSeries {
 
 export interface CrossrefMappedMetadata {
   readonly title: string;
+  readonly subtitle?: string | undefined;
   readonly publicationDate: string;
   readonly abstract?: string | undefined;
   readonly language?: string | undefined;
@@ -150,6 +158,7 @@ function inspectCrossrefRecord(record: CrossrefRecordInput, doi?: string): Cross
 function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefRecordMappingResult {
   const metadata: CrossrefMappedMetadata = {
     title: record.title,
+    ...(record.subtitle ? { subtitle: record.subtitle } : {}),
     publicationDate: record.publicationDate,
     ...(record.abstract ? { abstract: record.abstract } : {}),
     ...(record.language ? { language: record.language.toLowerCase() } : {}),
@@ -162,7 +171,11 @@ function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefReco
     landingUrl: record.landingUrl,
     ...(record.funding ? { funding: record.funding } : {}),
     ...(record.references ? { references: record.references.map((reference) => normalizeDoi(reference) ?? reference) } : {}),
-    ...(record.relations ? { relations: record.relations } : {})
+    ...(record.relations ? { relations: record.relations } : {}),
+    ...(licenseUrlOf(record.license) ? { licenseUrl: licenseUrlOf(record.license)! } : {}),
+    ...(isOpenLicense(record.license) ? { freeToRead: true as const } : {}),
+    ...(record.fullTextUrl ? { fullTextUrl: record.fullTextUrl } : {}),
+    ...optionalField('publisherPlace', record.fields['place'])
   };
   const organization = record.publisher ?? record.institution;
 
@@ -480,8 +493,10 @@ function mapCreators(creators: readonly PublicationCreator[]): readonly Publicat
     return {
       type: 'personal', name: familyName, familyName, creatorType,
       ...(creator.givenName ? { givenName: creator.givenName } : {}),
-      ...(creator.affiliation ? { affiliation: creator.affiliation } : {}),
-      ...(creator.orcid ? { orcid: normalizeOrcidValue(creator.orcid) } : {})
+      ...(creator.affiliations?.length ? { affiliations: creator.affiliations } : {}),
+      ...(creator.orcid ? { orcid: normalizeOrcidValue(creator.orcid) } : {}),
+      ...(creator.roles?.length ? { roles: creator.roles } : {}),
+      ...(creator.corresponding ? { corresponding: true } : {})
     };
   });
 }

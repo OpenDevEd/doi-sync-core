@@ -485,7 +485,7 @@ describe('CrossrefApiClient', () => {
 	          creatorType: 'author',
 	          givenName: 'Ada',
 	          familyName: 'Lovelace',
-	          affiliation: 'OpenDevEd',
+	          affiliations: [{ name: 'OpenDevEd' }],
 	          orcid: '0000-0002-1825-0097'
 	        }],
 	        tags: []

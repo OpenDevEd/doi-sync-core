@@ -342,6 +342,35 @@ describe('provider-neutral live executor', () => {
 		expect(journal.markZenodoPublishDraftPublished).toHaveBeenCalledOnce();
 	});
 
+	it('saves what a journaled write put in the draft, resolved as the write was, when it publishes the draft later', async () => {
+		const targets = {
+			crossref: { enabled: false as const },
+			zenodo: { enabled: true as const, environment: 'sandbox' as const, identifierPolicy: 'mint-zenodo' as const }
+		};
+		const base = plan(targets);
+		if (base.status !== 'write_required' || !base.hashes.zenodoPayloadHash) throw new Error('expected Zenodo baseline');
+		const journaled = planPublicationSync({
+			record: base.record, files: base.files, identifiers: {}, targets,
+			state: { zenodo: {
+				environment: 'sandbox', identifierPolicy: 'mint-zenodo',
+				journal: {
+					operationType: 'zenodo_metadata_update', depositionId: '42', draftRecordId: '42', parentId: '41',
+					payloadHash: base.hashes.zenodoPayloadHash, status: 'ready_to_publish'
+				}
+			} }
+		});
+		const written = { metadata: { title: 'As written, a ROR Zenodo lacks given by name' }, custom_fields: {} };
+		const recordPayload = vi.fn(() => Promise.resolve(written));
+		const results = await executeLivePublicationSyncPlan(executionInput(targets, {
+			plan: journaled,
+			providers: { crossref: crossref(), zenodo: Object.assign(zenodo(), { recordPayload }) },
+			zenodoJournal: zenodoJournal()
+		}));
+
+		expect(recordPayload).toHaveBeenCalledOnce();
+		expect(results[0]).toMatchObject({ type: 'zenodo_publish_journaled_draft', status: 'succeeded', zenodoPayloadSnapshot: written });
+	});
+
 	it('keeps failing when publish answers 404 and no published record exists under the draft id', async () => {
 		const targets = {
 			crossref: { enabled: false as const },

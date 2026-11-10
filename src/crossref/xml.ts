@@ -27,6 +27,8 @@ export interface CrossrefXmlInput {
 	readonly relation?: CrossrefDepositRelation;
 }
 
+/** A country's English name, which Crossref's institution_place takes. */
+const COUNTRY = new Intl.DisplayNames(['en'], { type: 'region' });
 const XML_LANGUAGE_PATTERN = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const ORCID_PATTERN = /^(?:https?:\/\/orcid\.org\/)?([0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{3}[X0-9])$/i;
 
@@ -39,6 +41,7 @@ export function buildCrossrefPublicationXml(input: CrossrefXmlInput): string {
 		'xmlns:jats': 'http://www.ncbi.nlm.nih.gov/JATS1',
 		'xmlns:rel': 'http://www.crossref.org/relations.xsd',
 		'xmlns:fr': 'http://www.crossref.org/fundref.xsd',
+		'xmlns:ai': 'http://www.crossref.org/AccessIndicators.xsd',
 		'xsi:schemaLocation': 'http://www.crossref.org/schema/5.5.0 https://www.crossref.org/schemas/crossref5.5.0.xsd'
 	});
 
@@ -105,14 +108,15 @@ function appendJournalArticle(
 		if (record.issue) appendTextElement(journalIssue, 'issue', record.issue);
 	}
 	const article = journal.ele('journal_article', languageAttributes(record.metadata.language));
-	appendTitles(article, record.metadata.title);
+	appendTitles(article, record.metadata.title, record.metadata.subtitle);
 	appendContributors(article, record.metadata.creators);
 	appendAbstract(article, record.metadata.abstract, record.metadata.language);
 	appendDate(article, 'publication_date', record.metadata.publicationDate);
 	appendPages(article, record.pages);
 	appendFunding(article, record.funding);
+	appendAccess(article, record);
 	appendRelations(article, record, relation);
-	appendDoiData(article, record.metadata.doi, record.landingUrl);
+	appendDoiData(article, record.metadata.doi, record.landingUrl, record.fullTextUrl);
 	appendCitations(article, record.references);
 }
 
@@ -126,15 +130,16 @@ function appendBook(
 		languageAttributes(record.metadata.language)
 	);
 	appendContributors(metadata, record.metadata.creators);
-	appendTitles(metadata, record.metadata.title);
+	appendTitles(metadata, record.metadata.title, record.metadata.subtitle);
 	appendAbstract(metadata, record.metadata.abstract, record.metadata.language);
 	if (record.edition) appendTextElement(metadata, 'edition_number', record.edition);
 	appendDate(metadata, 'publication_date', record.metadata.publicationDate);
 	appendIsbnChoice(metadata, record.isbns);
-	appendPublisher(metadata, record.publisher);
+	appendPublisher(metadata, record.publisher, record.publisherPlace);
 	appendFunding(metadata, record.funding);
+	appendAccess(metadata, record);
 	appendRelations(metadata, record, relation);
-	appendDoiData(metadata, record.metadata.doi, record.landingUrl);
+	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl);
 	appendCitations(metadata, record.references);
 }
 
@@ -150,21 +155,22 @@ function appendBookComponent(
 	if (record.edition) appendTextElement(bookMetadata, 'edition_number', record.edition);
 	appendDate(bookMetadata, 'publication_date', record.metadata.publicationDate);
 	appendIsbnChoice(bookMetadata, record.isbns);
-	appendPublisher(bookMetadata, record.publisher);
+	appendPublisher(bookMetadata, record.publisher, record.publisherPlace);
 
 	const item = book.ele('content_item', {
 		component_type: record.componentType,
 		...languageAttributes(record.metadata.language)
 	});
 	appendContributors(item, record.metadata.creators);
-	appendTitles(item, record.metadata.title);
+	appendTitles(item, record.metadata.title, record.metadata.subtitle);
 	appendAbstract(item, record.metadata.abstract, record.metadata.language);
 	if (record.componentNumber) appendTextElement(item, 'component_number', record.componentNumber);
 	appendDate(item, 'publication_date', record.metadata.publicationDate);
 	appendPages(item, record.pages);
 	appendFunding(item, record.funding);
+	appendAccess(item, record);
 	appendRelations(item, record, relation);
-	appendDoiData(item, record.metadata.doi, record.landingUrl);
+	appendDoiData(item, record.metadata.doi, record.landingUrl, record.fullTextUrl);
 	appendCitations(item, record.references);
 }
 
@@ -181,19 +187,20 @@ function appendConferencePaper(
 	if (record.conferenceDate) appendTextElement(eventMetadata, 'conference_date', record.conferenceDate);
 	const proceedings = conference.ele('proceedings_metadata', languageAttributes(record.metadata.language));
 	appendTextElement(proceedings, 'proceedings_title', record.proceedingsTitle);
-	appendPublisher(proceedings, record.publisher);
+	appendPublisher(proceedings, record.publisher, record.publisherPlace);
 	appendDate(proceedings, 'publication_date', record.metadata.publicationDate);
 	appendIsbnChoice(proceedings, record.isbns);
 
 	const paper = conference.ele('conference_paper', languageAttributes(record.metadata.language));
 	appendContributors(paper, record.metadata.creators);
-	appendTitles(paper, record.metadata.title);
+	appendTitles(paper, record.metadata.title, record.metadata.subtitle);
 	appendAbstract(paper, record.metadata.abstract, record.metadata.language);
 	appendDate(paper, 'publication_date', record.metadata.publicationDate);
 	appendPages(paper, record.pages);
 	appendFunding(paper, record.funding);
+	appendAccess(paper, record);
 	appendRelations(paper, record, relation);
-	appendDoiData(paper, record.metadata.doi, record.landingUrl);
+	appendDoiData(paper, record.metadata.doi, record.landingUrl, record.fullTextUrl);
 	appendCitations(paper, record.references);
 }
 
@@ -204,15 +211,16 @@ function appendDissertation(
 ): void {
 	const dissertation = body.ele('dissertation', languageAttributes(record.metadata.language));
 	appendContributors(dissertation, record.metadata.creators, true);
-	appendTitles(dissertation, record.metadata.title);
+	appendTitles(dissertation, record.metadata.title, record.metadata.subtitle);
 	appendAbstract(dissertation, record.metadata.abstract, record.metadata.language);
 	appendDate(dissertation, 'approval_date', record.metadata.publicationDate);
 	appendInstitution(dissertation, record.institution);
 	if (record.degree) appendTextElement(dissertation, 'degree', record.degree);
 	record.isbns.forEach((isbn) => appendTextElement(dissertation, 'isbn', isbn));
 	appendFunding(dissertation, record.funding);
+	appendAccess(dissertation, record);
 	appendRelations(dissertation, record, relation);
-	appendDoiData(dissertation, record.metadata.doi, record.landingUrl);
+	appendDoiData(dissertation, record.metadata.doi, record.landingUrl, record.fullTextUrl);
 	appendCitations(dissertation, record.references);
 }
 
@@ -230,17 +238,18 @@ function appendReport(
 		languageAttributes(record.metadata.language)
 	);
 	appendContributors(metadata, record.metadata.creators);
-	appendTitles(metadata, record.metadata.title);
+	appendTitles(metadata, record.metadata.title, record.metadata.subtitle);
 	if (record.edition) appendTextElement(metadata, 'edition_number', record.edition);
 	appendAbstract(metadata, record.metadata.abstract, record.metadata.language);
 	appendDate(metadata, 'publication_date', record.metadata.publicationDate);
 	record.isbns.forEach((isbn) => appendTextElement(metadata, 'isbn', isbn));
-	if (record.publisher) appendPublisher(metadata, record.publisher);
+	if (record.publisher) appendPublisher(metadata, record.publisher, record.publisherPlace);
 	if (record.institution) appendInstitution(metadata, record.institution);
 	appendPublisherItem(metadata, record.itemNumber);
 	appendFunding(metadata, record.funding);
+	appendAccess(metadata, record);
 	appendRelations(metadata, record, relation);
-	appendDoiData(metadata, record.metadata.doi, record.landingUrl);
+	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl);
 	appendCitations(metadata, record.references);
 }
 
@@ -259,16 +268,17 @@ function appendSeriesReport(
 	appendTitles(seriesMetadata, series.title);
 	series.issns.forEach((issn) => appendTextElement(seriesMetadata, 'issn', issn));
 	appendContributors(metadata, record.metadata.creators);
-	appendTitles(metadata, record.metadata.title);
+	appendTitles(metadata, record.metadata.title, record.metadata.subtitle);
 	appendAbstract(metadata, record.metadata.abstract, record.metadata.language);
 	if (record.edition) appendTextElement(metadata, 'edition_number', record.edition);
 	appendDate(metadata, 'publication_date', record.metadata.publicationDate);
 	record.isbns.forEach((isbn) => appendTextElement(metadata, 'isbn', isbn));
-	if (record.publisher) appendPublisher(metadata, record.publisher);
+	if (record.publisher) appendPublisher(metadata, record.publisher, record.publisherPlace);
 	if (record.institution) appendInstitution(metadata, record.institution);
 	appendPublisherItem(metadata, record.itemNumber);
 	appendFunding(metadata, record.funding);
-	appendDoiData(metadata, record.metadata.doi, record.landingUrl);
+	appendAccess(metadata, record);
+	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl);
 	appendCitations(metadata, record.references);
 	appendRelations(metadata, record, relation);
 }
@@ -283,19 +293,20 @@ function appendStandard(
 		languageAttributes(record.metadata.language)
 	);
 	appendContributors(metadata, record.metadata.creators);
-	appendTitles(metadata, record.metadata.title);
+	appendTitles(metadata, record.metadata.title, record.metadata.subtitle);
 	appendAbstract(metadata, record.metadata.abstract, record.metadata.language);
 	appendTextElement(metadata.ele('designators').ele('std_as_published'), 'std_designator', record.designator);
 	if (record.edition) appendTextElement(metadata, 'edition_number', record.edition);
 	appendDate(metadata, 'approval_date', record.metadata.publicationDate);
 	record.isbns.forEach((isbn) => appendTextElement(metadata, 'isbn', isbn));
-	if (record.publisher) appendPublisher(metadata, record.publisher);
+	if (record.publisher) appendPublisher(metadata, record.publisher, record.publisherPlace);
 	const bodyElement = metadata.ele('standards_body');
 	appendTextElement(bodyElement, 'standards_body_name', record.standardsBody);
 	appendTextElement(bodyElement, 'standards_body_acronym', record.standardsBodyAcronym);
 	appendFunding(metadata, record.funding);
+	appendAccess(metadata, record);
 	appendRelations(metadata, record, relation);
-	appendDoiData(metadata, record.metadata.doi, record.landingUrl);
+	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl);
 	appendCitations(metadata, record.references);
 }
 
@@ -307,19 +318,20 @@ function appendDataset(
 	const database = body.ele('database');
 	const databaseMetadata = database.ele('database_metadata', languageAttributes(record.metadata.language));
 	appendTitles(databaseMetadata, record.databaseTitle);
-	if (record.publisher) appendPublisher(databaseMetadata, record.publisher);
+	if (record.publisher) appendPublisher(databaseMetadata, record.publisher, record.publisherPlace);
 	if (record.institution) appendInstitution(databaseMetadata, record.institution);
 
 	const dataset = database.ele('dataset', { dataset_type: 'record' });
 	appendContributors(dataset, record.metadata.creators);
-	appendTitles(dataset, record.metadata.title);
+	appendTitles(dataset, record.metadata.title, record.metadata.subtitle);
 	const databaseDate = dataset.ele('database_date');
 	appendDate(databaseDate, 'publication_date', record.metadata.publicationDate);
 	if (record.metadata.abstract) appendTextElement(dataset, 'description', record.metadata.abstract);
 	appendFunding(dataset, record.funding);
+	appendAccess(dataset, record);
 	appendRelations(dataset, record, relation);
 	appendVersionInfo(dataset, record.version);
-	appendDoiData(dataset, record.metadata.doi, record.landingUrl);
+	appendDoiData(dataset, record.metadata.doi, record.landingUrl, record.fullTextUrl);
 	appendCitations(dataset, record.references);
 }
 
@@ -334,19 +346,22 @@ function appendPostedContent(
 	});
 	appendTextElement(posted, 'group_title', record.hostingIdentity);
 	appendContributors(posted, record.metadata.creators);
-	appendTitles(posted, record.metadata.title);
+	appendTitles(posted, record.metadata.title, record.metadata.subtitle);
 	appendDate(posted, 'posted_date', record.metadata.publicationDate);
 	appendInstitution(posted, record.hostingIdentity);
 	if (record.itemNumber) appendTextElement(posted, 'item_number', record.itemNumber);
 	appendAbstract(posted, record.metadata.abstract, record.metadata.language);
 	appendFunding(posted, record.funding);
+	appendAccess(posted, record);
 	appendRelations(posted, record, relation);
-	appendDoiData(posted, record.metadata.doi, record.landingUrl);
+	appendDoiData(posted, record.metadata.doi, record.landingUrl, record.fullTextUrl);
 	appendCitations(posted, record.references);
 }
 
-function appendTitles(parent: XMLBuilder, title: string): void {
-	appendTextElement(parent.ele('titles'), 'title', title);
+function appendTitles(parent: XMLBuilder, title: string, subtitle?: string): void {
+	const titles = parent.ele('titles');
+	appendTextElement(titles, 'title', title);
+	if (subtitle) appendTextElement(titles, 'subtitle', subtitle);
 }
 
 function appendAbstract(parent: XMLBuilder, abstract: string | undefined, language: string | undefined): void {
@@ -365,8 +380,10 @@ function appendDate(parent: XMLBuilder, elementName: string, date: string): void
 	appendTextElement(element, 'year', parts.year);
 }
 
-function appendPublisher(parent: XMLBuilder, publisher: string): void {
-	appendTextElement(parent.ele('publisher'), 'publisher_name', publisher);
+function appendPublisher(parent: XMLBuilder, publisher: string, place?: string): void {
+	const element = parent.ele('publisher');
+	appendTextElement(element, 'publisher_name', publisher);
+	if (place) appendTextElement(element, 'publisher_place', place);
 }
 
 function appendInstitution(parent: XMLBuilder, institution: string): void {
@@ -398,10 +415,24 @@ function appendVersionInfo(parent: XMLBuilder, version: string | undefined): voi
 	appendTextElement(parent.ele('version_info'), 'version', version);
 }
 
-function appendDoiData(parent: XMLBuilder, doi: string, resourceUrl: string): void {
+/** The DOI and its landing page, and with a full text, where machines read it: text mining and Similarity Check. */
+function appendDoiData(parent: XMLBuilder, doi: string, resourceUrl: string, fullTextUrl?: string): void {
 	const doiData = parent.ele('doi_data');
 	appendTextElement(doiData, 'doi', doi);
 	appendTextElement(doiData, 'resource', normalizeResourceUrl(resourceUrl));
+	if (!fullTextUrl) return;
+	const fullText = normalizeResourceUrl(fullTextUrl);
+	appendTextElement(doiData.ele('collection', { property: 'text-mining' }).ele('item'), 'resource', fullText).att('mime_type', 'application/pdf');
+	appendTextElement(doiData.ele('collection', { property: 'crawler-based' }).ele('item', { crawler: 'similarity-check' }), 'resource', fullText);
+}
+
+/** The licence the work is under, for the version of record and for text mining, and whether anyone may read it. */
+function appendAccess(parent: XMLBuilder, record: Pick<CrossrefMappedRecord, 'licenseUrl' | 'freeToRead'>): void {
+	if (!record.licenseUrl && !record.freeToRead) return;
+	const program = parent.ele('ai:program', { name: 'AccessIndicators' });
+	if (record.freeToRead) program.ele('ai:free_to_read');
+	if (!record.licenseUrl) return;
+	for (const appliesTo of ['vor', 'tdm']) appendTextElement(program, 'ai:license_ref', record.licenseUrl).att('applies_to', appliesTo);
 }
 
 function appendContributors(
@@ -424,8 +455,18 @@ function appendContributors(
 			const person = contributors.ele('person_name', attributes);
 			if (creator.givenName) appendTextElement(person, 'given_name', creator.givenName);
 			appendTextElement(person, 'surname', creator.familyName ?? creator.name);
-			if (creator.affiliation) {
-				appendInstitution(person.ele('affiliations'), creator.affiliation);
+			// What each person did, in CRediT's terms, and who answers for the work.
+			creator.roles?.forEach((role) => person.ele('role', { vocab: 'credit', type: role }));
+			if (creator.corresponding) person.ele('role', { vocab: 'crossref', type: 'corresponding-author' });
+			if (creator.affiliations?.length) {
+				const affiliations = person.ele('affiliations');
+				for (const affiliation of creator.affiliations) {
+					const institution = affiliations.ele('institution');
+					appendTextElement(institution, 'institution_name', affiliation.name);
+					if (affiliation.ror) appendTextElement(institution, 'institution_id', `https://ror.org/${affiliation.ror}`).att('type', 'ror');
+					const country = affiliation.country ? COUNTRY.of(affiliation.country) : undefined;
+					if (country && country !== affiliation.country) appendTextElement(institution, 'institution_place', country);
+				}
 			}
 			const orcid = normalizeOrcid(creator.orcid);
 			if (orcid) appendTextElement(person, 'ORCID', orcid);
@@ -445,6 +486,7 @@ function appendFunding(parent: XMLBuilder, funding: readonly PublicationFunding[
 		if (funder.funderIdentifier) {
 			name.ele('fr:assertion', { name: 'funder_identifier' }).txt(sanitizeXmlText(funder.funderIdentifier));
 		}
+		if (funder.funderRor) group.ele('fr:assertion', { name: 'ror' }).txt(`https://ror.org/${funder.funderRor}`);
 		funder.awards.forEach((award) => group.ele('fr:assertion', { name: 'award_number' }).txt(sanitizeXmlText(award)));
 	}
 }

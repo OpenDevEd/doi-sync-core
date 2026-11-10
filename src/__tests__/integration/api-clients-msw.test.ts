@@ -212,10 +212,15 @@ describe('HTTP-level provider clients with MSW', () => {
         expect(request.headers.get('content-type')).toContain('application/octet-stream');
         return HttpResponse.json({});
       }),
-      http.put('https://sandbox.zenodo.org/api/deposit/depositions/502440', async ({ request }) => {
+      http.get('https://sandbox.zenodo.org/api/records/502440/draft', ({ request }) => {
+        calls.push(`${request.method} ${request.url}`);
+        expect(request.headers.get('accept')).toBe(ZENODO_INVENIORDM_ACCEPT);
+        return HttpResponse.json({ access: { record: 'public', files: 'public' }, files: { enabled: true }, pids: {}, metadata: {}, custom_fields: {} });
+      }),
+      http.put('https://sandbox.zenodo.org/api/records/502440/draft', async ({ request }) => {
         calls.push(`${request.method} ${request.url}`);
         metadataBodies.push(await request.json());
-        return HttpResponse.json({ id: 502440, record_id: 502440 });
+        return HttpResponse.json({ id: '502440', errors: [] });
       }),
       http.post('https://sandbox.zenodo.org/api/deposit/depositions/502440/actions/publish', ({ request }) => {
         calls.push(`${request.method} ${request.url}`);
@@ -251,15 +256,15 @@ describe('HTTP-level provider clients with MSW', () => {
     expect(calls).toEqual([
       'POST https://sandbox.zenodo.org/api/deposit/depositions',
       'PUT https://sandbox.zenodo.org/api/files/bucket-1/report.pdf',
-      'PUT https://sandbox.zenodo.org/api/deposit/depositions/502440',
+      'GET https://sandbox.zenodo.org/api/records/502440/draft',
+      'PUT https://sandbox.zenodo.org/api/records/502440/draft',
       'POST https://sandbox.zenodo.org/api/deposit/depositions/502440/actions/publish',
       'GET https://sandbox.zenodo.org/api/records/502440'
     ]);
     expect(metadataBodies[0]).toMatchObject({
       metadata: {
         title: 'Evidence report',
-        upload_type: 'publication',
-        publication_type: 'report'
+        resource_type: { id: 'publication-report' }
       }
     });
   });

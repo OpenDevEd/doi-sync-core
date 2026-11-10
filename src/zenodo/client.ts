@@ -1,15 +1,16 @@
 import { createHash } from 'node:crypto';
-import { buildZenodoWritePayload, parseZenodoLegacyDepositionIdentifiers, parseZenodoRecordIdentifiers, parseZenodoRecordSnapshot, ZENODO_INVENIORDM_ACCEPT, type DoiPolicy, type ZenodoDoiLookupResult, type ZenodoLegacyDepositionIdentifiers, type ZenodoLegacyDepositionPayload, type ZenodoPublishedRecordVerification, type ZenodoRecordIdentifiers, type ZenodoRecordSnapshot, type ZenodoUnsubmittedDraftDoiLookupResult, type ZenodoVerificationResult } from './records.js';
+import { parseZenodoLegacyDepositionIdentifiers, parseZenodoRecordIdentifiers, parseZenodoRecordSnapshot, ZENODO_INVENIORDM_ACCEPT, type ZenodoDoiLookupResult, type ZenodoLegacyDepositionIdentifiers, type ZenodoPublishedRecordVerification, type ZenodoRecordIdentifiers, type ZenodoRecordSnapshot, type ZenodoUnsubmittedDraftDoiLookupResult, type ZenodoVerificationResult } from './records.js';
 import type { ZenodoPreparedDraft, ZenodoPublishJournalOperationType } from './journal.js';
 import type { PublicationProviderMetadata } from '../publication/record.js';
 import { asJsonObject, toJsonValue } from '../json.js';
 import type { JsonValue } from '../hash.js';
+import { buildZenodoRecordPayload, programmingLanguageId, ZENODO_MANAGED_CUSTOM_FIELDS, ZENODO_MANAGED_METADATA_KEYS, type DoiPolicy, type ZenodoKnownRors, type ZenodoRecordPayload } from './rdm-payload.js';
 import { ProviderHttpError, retryAfterMsFromHeaders, type ProviderResponseHeaders } from '../resilience/errors.js';
 import { DirectProviderOperationRunner, type ProviderOperationRunner } from '../resilience/provider-runner.js';
 import { asRecord, asString, idString } from '../guards.js';
 import {
   parseZenodoLegacyDepositionFiles,
-  verifyZenodoLegacyDepositionState,
+  verifyZenodoRecordState,
   type ZenodoExpectedPublishedFile,
   type ZenodoLegacyDepositionFile,
   type ZenodoPublishedStateVerification
@@ -51,7 +52,7 @@ export interface ReadZenodoRecordSnapshotInput {
 export interface VerifyZenodoPublishedStateInput {
   readonly token: string;
   readonly recordId: string;
-  readonly expectedPayload: ZenodoLegacyDepositionPayload;
+  readonly expectedPayload: ZenodoRecordPayload;
   readonly files: readonly ZenodoExpectedPublishedFile[];
 }
 
@@ -117,6 +118,8 @@ export class ZenodoApiClient {
   private readonly fetch: ZenodoFetchLike;
   private readonly endpoint: string;
   private readonly operationRunner: ProviderOperationRunner;
+  /** Whether Zenodo's vocabularies hold a ROR, by `affiliations/<ror>` or `funders/<ror>`. */
+  private readonly vocabulary = new Map<string, boolean>();
 
   constructor(options: ZenodoApiClientOptions = {}) {
     this.fetch = options.fetch ?? fetch;
@@ -214,8 +217,14 @@ export class ZenodoApiClient {
       { allowedStatuses: [404] }
     );
     if (response.status === 404) return { status: 'missing' };
-    return verifyZenodoLegacyDepositionState({
-      response: await response.json(),
+    // The deposition says whether it is published and with which files; the record holds its metadata as Zenodo keeps it.
+    const record = await this.request(`${this.endpoint}/api/records/${encodeURIComponent(input.recordId)}`, {
+      method: 'GET',
+      headers: { ...authHeaders(input.token), Accept: ZENODO_INVENIORDM_ACCEPT }
+    });
+    return verifyZenodoRecordState({
+      deposition: await response.json(),
+      record: await record.json(),
       expectedPayload: input.expectedPayload,
       expectedFiles: input.files
     });
@@ -282,9 +291,7 @@ export class ZenodoApiClient {
     const deposition = await this.createEmptyDeposition(input.token, input.onPreparedDraft);
     const draft = toPreparedDraft(deposition);
     await this.uploadFilesToBucket(input.token, deposition, input.files);
-    const payloads = buildDepositionPayloads(deposition, input);
-    await this.updateDepositionMetadata(input.token, deposition.id, payloads.wire);
-    return withPayloadSnapshot(draft, payloads.managed);
+    return withPayloadSnapshot(draft, await this.writeDraftMetadata(input.token, deposition.id, input));
   }
 
   async prepareAdoptLegacyDeposition(input: ZenodoAdoptLegacyDepositionInput): Promise<ZenodoPreparedDraft> {
@@ -297,18 +304,14 @@ export class ZenodoApiClient {
     const draft = toPreparedDraft(deposition);
     await input.onPreparedDraft?.(draft);
     await this.replaceLegacyDepositionFiles(input.token, deposition, input.files);
-    const payloads = buildDepositionPayloads(deposition, input);
-    await this.updateDepositionMetadata(input.token, deposition.id, payloads.wire);
-    return withPayloadSnapshot(draft, payloads.managed);
+    return withPayloadSnapshot(draft, await this.writeDraftMetadata(input.token, deposition.id, input));
   }
 
   async prepareUpdateRecordMetadata(input: ZenodoUpdateRecordMetadataInput): Promise<ZenodoPreparedDraft> {
     const editable = await this.postDepositionAction(input.token, input.latestRecordId, 'edit');
     const draft = toPreparedDraft(editable);
     await input.onPreparedDraft?.(draft);
-    const payloads = buildDepositionPayloads(editable, input);
-    await this.updateDepositionMetadata(input.token, editable.id, payloads.wire);
-    return withPayloadSnapshot(draft, payloads.managed);
+    return withPayloadSnapshot(draft, await this.writeDraftMetadata(input.token, editable.id, input));
   }
 
   async prepareNewVersion(input: ZenodoCreateNewVersionInput): Promise<ZenodoPreparedDraft> {
@@ -317,9 +320,7 @@ export class ZenodoApiClient {
     const preparedDraft = toPreparedDraft(draft);
     await input.onPreparedDraft?.(preparedDraft);
     await this.replaceLegacyDepositionFiles(input.token, draft, input.files);
-    const payloads = buildDepositionPayloads(draft, input);
-    await this.updateDepositionMetadata(input.token, draft.id, payloads.wire);
-    return withPayloadSnapshot(preparedDraft, payloads.managed);
+    return withPayloadSnapshot(preparedDraft, await this.writeDraftMetadata(input.token, draft.id, input));
   }
 
   async prepareUpdateRecordFiles(input: ZenodoUpdateRecordFilesInput): Promise<ZenodoPreparedDraft> {
@@ -489,12 +490,67 @@ export class ZenodoApiClient {
     return parseZenodoLegacyDepositionFiles(await response.json());
   }
 
-  private async updateDepositionMetadata(token: string, depositionId: string, payload: ZenodoLegacyDepositionPayload): Promise<void> {
-    await this.request(`${this.endpoint}/api/deposit/depositions/${encodeURIComponent(depositionId)}`, {
+  /**
+   * Writes the record's metadata to its draft in the InvenioRDM format, which takes what the legacy deposit API can't:
+   * affiliations and funders by ROR, roles, subtitles, funding for any funder, references, places. What the package
+   * doesn't own stays as the draft has it: access, files, communities and other custom fields. Answers what it wrote.
+   */
+  private async writeDraftMetadata(token: string, recordId: string, input: ZenodoCreateRecordInput | ZenodoUpdateRecordMetadataInput): Promise<ZenodoRecordPayload> {
+    const managed = await this.recordPayload(input);
+    const url = `${this.endpoint}/api/records/${encodeURIComponent(recordId)}/draft`;
+    const draft = asRecord(await (await this.request(url, { method: 'GET', headers: { ...authHeaders(token), Accept: ZENODO_INVENIORDM_ACCEPT } })).json()) ?? {};
+    const response = await this.request(url, {
       method: 'PUT',
-      headers: jsonHeaders(token),
-      body: JSON.stringify(payload)
+      headers: jsonHeadersWithAccept(token, ZENODO_INVENIORDM_ACCEPT),
+      body: JSON.stringify({
+        ...(draft['access'] ? { access: draft['access'] } : {}),
+        ...(draft['files'] ? { files: draft['files'] } : {}),
+        pids: managed.pids ?? draft['pids'] ?? {},
+        metadata: { ...Object.fromEntries(Object.entries(asRecord(draft['metadata']) ?? {}).filter(([key]) => !ZENODO_MANAGED_METADATA_KEYS.has(key))), ...managed.metadata },
+        custom_fields: { ...Object.fromEntries(Object.entries(asRecord(draft['custom_fields']) ?? {}).filter(([key]) => !ZENODO_MANAGED_CUSTOM_FIELDS.has(key))), ...managed.custom_fields }
+      })
     });
+    // A draft saves with what it can't take listed: refused, those are this write's error, in Zenodo's words.
+    const errors = asRecord(await response.json())?.['errors'];
+    if (Array.isArray(errors) && errors.length) {
+      throw new ProviderHttpError({ provider: 'zenodo', status: 400, body: JSON.stringify(errors).slice(0, 2000) });
+    }
+    return managed;
+  }
+
+  /**
+   * What the record's metadata is written as: the InvenioRDM payload, with each vocabulary entry Zenodo lacks given by
+   * name or left out. The same record against the same vocabularies always gives the same payload, so a publish
+   * carried on from the journal can say what was written.
+   */
+  async recordPayload(input: { readonly doiPolicy: DoiPolicy; readonly metadata: PublicationProviderMetadata; readonly resourceUrl?: string }): Promise<ZenodoRecordPayload> {
+    return buildZenodoRecordPayload({
+      doiPolicy: input.doiPolicy,
+      metadata: input.metadata,
+      ...(input.resourceUrl ? { resourceUrl: input.resourceUrl } : {}),
+      known: await this.knownVocabulary(input.metadata)
+    });
+  }
+
+  /** The RORs and programming languages that Zenodo's vocabularies hold, asked once each for as long as the client lives. */
+  private async knownVocabulary(metadata: PublicationProviderMetadata): Promise<ZenodoKnownRors> {
+    const ask = async (path: string, id: string) => {
+      const key = `${path}/${id}`;
+      let known = this.vocabulary.get(key);
+      if (known === undefined) {
+        const response = await this.request(`${this.endpoint}/api/${path}/${encodeURIComponent(id)}`, { method: 'GET', headers: { Accept: 'application/json' } }, { allowedStatuses: [404] });
+        known = response.status !== 404;
+        this.vocabulary.set(key, known);
+      }
+      return known ? [id] : [];
+    };
+    const held = async (path: string, ids: readonly string[]) => new Set((await Promise.all([...new Set(ids)].map((id) => ask(path, id)))).flat());
+    const language = metadata.fields?.['programmingLanguage'];
+    return {
+      affiliations: await held('affiliations', metadata.creators.flatMap((creator) => (creator.affiliations ?? []).flatMap((affiliation) => affiliation.ror ?? []))),
+      funders: await held('funders', (metadata.funding ?? []).flatMap((funding) => funding.funderRor ?? [])),
+      programmingLanguages: await held('vocabularies/code:programmingLanguages', typeof language === 'string' && language.trim() ? [programmingLanguageId(language)] : [])
+    };
   }
 
   private async openInvenioEditDraft(token: string, recordId: string): Promise<InvenioRecordDraft> {
@@ -679,28 +735,7 @@ interface ZenodoDeposition {
   readonly metadata?: Readonly<Record<string, JsonValue>>;
 }
 
-function buildDepositionPayloads(
-  deposition: ZenodoDeposition,
-  input: ZenodoCreateRecordInput | ZenodoUpdateRecordMetadataInput
-): {
-  readonly wire: ZenodoLegacyDepositionPayload;
-  readonly managed: ZenodoLegacyDepositionPayload;
-} {
-  const managed = buildZenodoWritePayload({
-    doiPolicy: input.doiPolicy,
-    metadata: input.metadata,
-    ...(input.resourceUrl ? { resourceUrl: input.resourceUrl } : {})
-  });
-  const wire = buildZenodoWritePayload({
-    doiPolicy: input.doiPolicy,
-    metadata: input.metadata,
-    ...(deposition.metadata ? { existingMetadata: deposition.metadata } : {}),
-    ...(input.resourceUrl ? { resourceUrl: input.resourceUrl } : {})
-  });
-  return { wire, managed };
-}
-
-function withPayloadSnapshot(draft: ZenodoPreparedDraft, payload: JsonValue | ZenodoLegacyDepositionPayload): ZenodoPreparedDraft {
+function withPayloadSnapshot(draft: ZenodoPreparedDraft, payload: JsonValue | ZenodoRecordPayload): ZenodoPreparedDraft {
   return {
     ...draft,
     payloadSnapshot: toJsonValue(payload)

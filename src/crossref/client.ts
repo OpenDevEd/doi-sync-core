@@ -646,13 +646,21 @@ function crossrefCreatorSignatures(creators: readonly PublicationCreator[] | Non
         const name = [familyName, givenName].filter((part): part is string => Boolean(part)).join(', ');
         return [
           'personal', creatorType, normalizeText(name) ?? '', givenName ?? '', familyName ?? '',
-          normalizeText(creator.affiliation) ?? '', normalizeOrcid(creator.orcid) ?? ''
+          affiliationNames(creator), normalizeOrcid(creator.orcid) ?? ''
         ].join('\u001F');
       }
 
       return ['organizational', creatorType, normalizeText(creator.name) ?? ''].join('\u001F');
     })
     .sort(compareCodeUnits);
+}
+
+/** A person's affiliations by name, in the order given: what Crossref's record echoes of them. */
+function affiliationNames(creator: PublicationCreator | NonNullable<CrossrefUnixrefRecord['creators']>[number]): string {
+  const names = 'affiliations' in creator && creator.affiliations
+    ? creator.affiliations.map((affiliation) => (typeof affiliation === 'string' ? affiliation : affiliation.name))
+    : [];
+  return names.map((name) => normalizeText(name) ?? '').join('\u001E');
 }
 
 function normalizeOrcid(value: string | null | undefined): string | null {
