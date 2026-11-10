@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ZenodoApiClient, type ZenodoFetchLike, type ZenodoResponseLike } from '../zenodo/client.js';
-import { buildZenodoWritePayload, ZENODO_INVENIORDM_ACCEPT } from '../zenodo/records.js';
+import { ZENODO_INVENIORDM_ACCEPT } from '../zenodo/records.js';
+import { buildZenodoRecordPayload } from '../zenodo/rdm-payload.js';
 import type { ProviderName } from '../resilience/errors.js';
 import { ResilientProviderOperationRunner, type ProviderOperationRunner } from '../resilience/provider-runner.js';
 
@@ -63,8 +64,23 @@ class NonReentrantRunner implements ProviderOperationRunner {
   }
 }
 
+/** Zenodo answering the package reading a record's draft and writing it back in the InvenioRDM format. */
+function draftAnswer(url: string, init: RequestInit): Promise<ZenodoResponseLike> | null {
+  if (!/\/api\/records\/\d+\/draft$/u.test(url)) return null;
+  const method = init.method ?? 'GET';
+  if (method === 'GET') {
+    return Promise.resolve(response({
+      access: { record: 'public', files: 'public' }, files: { enabled: true }, pids: {}, metadata: { title: 'Old' },
+      custom_fields: { 'code:codeRepository': 'https://example.org/provider-owned' }
+    }));
+  }
+  if (method === 'PUT') return Promise.resolve(response({ ...(JSON.parse(init.body as string) as object), errors: [] }));
+  return null;
+}
+
 function createSuccessfulCreateRecordFetch(): ZenodoFetchLike {
   return (url, init) => {
+    { const answer = draftAnswer(url, init); if (answer) return answer; }
     if (url.endsWith('/api/deposit/depositions')) {
       return Promise.resolve(response({
         id: 502440,
@@ -123,13 +139,14 @@ describe('ZenodoApiClient', () => {
     })).resolves.toMatchObject({
       latestRecordId: '502440'
     });
-    expect(runner.calls).toEqual(['zenodo', 'zenodo', 'zenodo', 'zenodo']);
+    expect(runner.calls).toEqual(['zenodo', 'zenodo', 'zenodo', 'zenodo', 'zenodo']);
   });
 
   it('verifies a Zenodo record using the current InvenioRDM response shape', async () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       return Promise.resolve(response({
         id: '15043088',
         created: publishedAtIso,
@@ -182,6 +199,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       return Promise.resolve(response({
         id: '17585570',
         created: publishedAtIso,
@@ -266,6 +284,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       return Promise.resolve(response({
         hits: {
           hits: [{
@@ -322,6 +341,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       expect(new Headers(init.headers).get('Accept')).toBe('application/json');
       if (url.includes('page=1')) {
         return Promise.resolve(response([
@@ -464,6 +484,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       return Promise.resolve(response({
         id: '123',
         created: publishedAtIso,
@@ -499,6 +520,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.includes('/api/records/')) {
         return Promise.resolve({
           ok: false,
@@ -562,6 +584,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions')) {
         return Promise.resolve({
           ok: true,
@@ -634,27 +657,35 @@ describe('ZenodoApiClient', () => {
     expect(calls.map((call) => `${call.init.method} ${call.url}`)).toEqual([
       'POST https://sandbox.zenodo.org/api/deposit/depositions',
       'PUT https://sandbox.zenodo.org/api/files/bucket-1/report.pdf',
-      'PUT https://sandbox.zenodo.org/api/deposit/depositions/502440',
+      'GET https://sandbox.zenodo.org/api/records/502440/draft',
+      'PUT https://sandbox.zenodo.org/api/records/502440/draft',
       'POST https://sandbox.zenodo.org/api/deposit/depositions/502440/actions/publish',
       'GET https://sandbox.zenodo.org/api/records/502440'
     ]);
-    expect(calls[4]?.init.headers).toMatchObject({
+    expect(calls[5]?.init.headers).toMatchObject({
       'User-Agent': 'doi-sync-core',
           Accept: ZENODO_INVENIORDM_ACCEPT,
       Authorization: 'Bearer sandbox-token'
     });
-    expect(calls[2]?.init.body).toBe(JSON.stringify(buildZenodoWritePayload({
-      doiPolicy: 'dual',
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'Report',
-        title: 'Evidence report',
-        publicationDate: '2026-05-20',
-        abstract: 'Evidence summary',
-        creators: [{ type: 'organizational', name: 'OpenDevEd' }],
-        tags: []
-      }
-    })));
+    // The draft keeps its access, files and the custom fields the package doesn't own; the metadata is the package's.
+    expect(JSON.parse(calls[3]?.init.body as string)).toEqual({
+      access: { record: 'public', files: 'public' },
+      files: { enabled: true },
+      pids: {},
+      metadata: buildZenodoRecordPayload({
+        doiPolicy: 'dual',
+        metadata: {
+          doi: '10.53832/opendeved.1205',
+          itemType: 'Report',
+          title: 'Evidence report',
+          publicationDate: '2026-05-20',
+          abstract: 'Evidence summary',
+          creators: [{ type: 'organizational', name: 'OpenDevEd' }],
+          tags: []
+        }
+      }).metadata,
+      custom_fields: { 'code:codeRepository': 'https://example.org/provider-owned' }
+    });
   });
 
   it('deletes an unpublished Zenodo draft through the legacy deposition API', async () => {
@@ -663,6 +694,7 @@ describe('ZenodoApiClient', () => {
       endpoint: 'https://sandbox.zenodo.org',
       fetch: (url, init) => {
         calls.push({ url, init });
+        { const answer = draftAnswer(url, init); if (answer) return answer; }
         return Promise.resolve({
           ok: true,
           status: 204,
@@ -712,6 +744,7 @@ describe('ZenodoApiClient', () => {
       endpoint: 'https://sandbox.zenodo.org',
       fetch: (requestUrl, init) => {
         calls.push({ url: requestUrl, init });
+        { const answer = draftAnswer(requestUrl, init); if (answer) return answer; }
         return Promise.resolve({
           ok: true, status: 204,
           json: () => Promise.resolve({}), text: () => Promise.resolve('')
@@ -731,6 +764,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions/502440')) {
         if (init.method === 'GET') {
           return Promise.resolve(response({
@@ -791,43 +825,29 @@ describe('ZenodoApiClient', () => {
       draftRecordId: '502440'
     });
 
-    const put = calls.find((call) => call.init.method === 'PUT' && call.url.endsWith('/api/deposit/depositions/502440'));
-    expect(put?.init.body).toBe(JSON.stringify(buildZenodoWritePayload({
-      doiPolicy: 'dual',
-      metadata: {
-        doi: '10.53832/opendeved.1205',
-        itemType: 'Report',
-        title: 'Evidence report v2',
-        publicationDate: '2026-05-21',
-        abstract: 'Updated summary',
-        creators: [{ type: 'personal', name: 'Lovelace, Ada' }],
-        tags: []
-      },
-      existingMetadata: {
-        title: 'Old title',
-        upload_type: 'publication',
-        publication_type: 'technicalnote',
-        description: 'Old summary',
-        creators: [{ name: 'Old Author' }],
-        access_right: 'open',
-        doi: '10.53832/opendeved.1205',
-        prereserve_doi: { doi: '10.5072/zenodo.502440', recid: 502440 },
-        communities: [{ identifier: 'opendeved' }],
-        related_identifiers: [{
-          identifier: 'zotero://select/groups/123/items/ABC12345',
-          relation: 'isAlternateIdentifier',
-          resource_type: 'other',
-          scheme: 'url'
-        }],
-        license: 'cc-by-4.0'
-      }
-    })));
+    const put = calls.find((call) => call.init.method === 'PUT' && call.url.endsWith('/api/records/502440/draft'));
+    expect(JSON.parse(put?.init.body as string)).toMatchObject({
+      metadata: buildZenodoRecordPayload({
+        doiPolicy: 'dual',
+        metadata: {
+          doi: '10.53832/opendeved.1205',
+          itemType: 'Report',
+          title: 'Evidence report v2',
+          publicationDate: '2026-05-21',
+          abstract: 'Updated summary',
+          creators: [{ type: 'personal', name: 'Lovelace, Ada' }],
+          tags: []
+        }
+      }).metadata,
+      custom_fields: { 'code:codeRepository': 'https://example.org/provider-owned' }
+    });
   });
 
   it('keeps existing legacy deposition files when adoption upload fails', async () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions/502440')) {
         return Promise.resolve(response({
           id: 502440,
@@ -899,6 +919,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions')) {
         return Promise.resolve({
           ok: true,
@@ -967,7 +988,7 @@ describe('ZenodoApiClient', () => {
       depositionId: '502440',
       draftRecordId: '502440'
     });
-    expect(draft.payloadSnapshot).toEqual(buildZenodoWritePayload({
+    expect(draft.payloadSnapshot).toEqual(buildZenodoRecordPayload({
       doiPolicy: 'dual',
       metadata: {
         doi: '10.53832/opendeved.1205',
@@ -982,7 +1003,8 @@ describe('ZenodoApiClient', () => {
     expect(calls.map((call) => `${call.init.method} ${call.url}`)).toEqual([
       'POST https://sandbox.zenodo.org/api/deposit/depositions',
       'PUT https://sandbox.zenodo.org/api/files/bucket-1/report.pdf',
-      'PUT https://sandbox.zenodo.org/api/deposit/depositions/502440'
+      'GET https://sandbox.zenodo.org/api/records/502440/draft',
+      'PUT https://sandbox.zenodo.org/api/records/502440/draft'
     ]);
 
     await expect(client.publishDraft({
@@ -997,7 +1019,8 @@ describe('ZenodoApiClient', () => {
     expect(calls.map((call) => `${call.init.method} ${call.url}`)).toEqual([
       'POST https://sandbox.zenodo.org/api/deposit/depositions',
       'PUT https://sandbox.zenodo.org/api/files/bucket-1/report.pdf',
-      'PUT https://sandbox.zenodo.org/api/deposit/depositions/502440',
+      'GET https://sandbox.zenodo.org/api/records/502440/draft',
+      'PUT https://sandbox.zenodo.org/api/records/502440/draft',
       'POST https://sandbox.zenodo.org/api/deposit/depositions/502440/actions/publish',
       'GET https://sandbox.zenodo.org/api/records/502440'
     ]);
@@ -1008,20 +1031,18 @@ describe('ZenodoApiClient', () => {
     const client = new ZenodoApiClient({
       endpoint: 'https://sandbox.zenodo.org',
       fetch: (url, init) => {
-        if (url.endsWith('/api/deposit/depositions/502440/actions/edit')) {
+        if (url.endsWith('/api/deposit/depositions/502440/actions/edit')) return Promise.resolve(response({ id: 502440, record_id: 502440 }));
+        if (url.endsWith('/api/records/502440/draft') && (init.method ?? 'GET') === 'GET') {
           return Promise.resolve(response({
-            id: 502440,
-            record_id: 502440,
-            metadata: {
-              custom_provider_field: 'preserve me',
-              contributors: [{ name: 'Provider editor', type: 'Editor' }]
-            }
+            access: { record: 'public', files: 'public' }, files: { enabled: true },
+            pids: { doi: { identifier: '10.5072/zenodo.502440', provider: 'datacite' } },
+            metadata: { title: 'Old title', custom_provider_field: 'preserve me', subjects: [{ subject: 'stale' }] },
+            custom_fields: { 'code:codeRepository': 'https://example.org/provider-owned' }
           }));
         }
-        if (url.endsWith('/api/deposit/depositions/502440') && init.method === 'PUT') {
-          if (typeof init.body !== 'string') throw new Error('expected JSON request body');
-          writtenPayload = JSON.parse(init.body);
-          return Promise.resolve(response({ id: 502440 }));
+        if (url.endsWith('/api/records/502440/draft') && init.method === 'PUT') {
+          writtenPayload = JSON.parse(init.body as string);
+          return Promise.resolve(response({ errors: [] }));
         }
         throw new Error(`unexpected ${init.method ?? 'GET'} ${url}`);
       }
@@ -1036,23 +1057,42 @@ describe('ZenodoApiClient', () => {
       token: 'sandbox-token', latestRecordId: '502440', doiPolicy: 'dual', metadata
     });
 
-    expect(writtenPayload).toMatchObject({ metadata: {
-      custom_provider_field: 'preserve me',
-      contributors: [
-        { name: 'Provider editor', type: 'Editor' },
-        { name: 'OpenDevEd', type: 'HostingInstitution' }
-      ]
-    } });
-    expect(draft.payloadSnapshot).toEqual(buildZenodoWritePayload({
-      doiPolicy: 'dual', metadata
-    }));
+    // What Zenodo's draft holds that the package doesn't write stays; a managed key the record has nothing for goes.
+    expect(writtenPayload).toMatchObject({
+      pids: { doi: { identifier: '10.5072/zenodo.502440', provider: 'datacite' } },
+      metadata: {
+        title: 'Evidence report',
+        custom_provider_field: 'preserve me',
+        contributors: [{ person_or_org: { type: 'organizational', name: 'OpenDevEd' }, role: { id: 'hostinginstitution' } }]
+      },
+      custom_fields: { 'code:codeRepository': 'https://example.org/provider-owned' }
+    });
+    expect(writtenPayload).not.toHaveProperty('metadata.subjects');
+    expect(draft.payloadSnapshot).toEqual(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata }));
     expect(draft.payloadSnapshot).not.toHaveProperty('metadata.custom_provider_field');
+  });
+
+  it('refuses a draft Zenodo saved with errors, in Zenodo\'s words', async () => {
+    const client = new ZenodoApiClient({
+      endpoint: 'https://sandbox.zenodo.org',
+      fetch: (url, init) => {
+        if (url.endsWith('/actions/edit')) return Promise.resolve(response({ id: 502440, record_id: 502440 }));
+        if (url.endsWith('/api/affiliations/0abcdef12')) return Promise.resolve({ ...response({}), ok: false, status: 404 });
+        if ((init.method ?? 'GET') === 'GET') return Promise.resolve(response({ metadata: {}, custom_fields: {} }));
+        return Promise.resolve(response({ errors: [{ field: 'metadata.publication_date', messages: ['Invalid date.'] }] }));
+      }
+    });
+    await expect(client.prepareUpdateRecordMetadata({
+      token: 'sandbox-token', latestRecordId: '502440', doiPolicy: 'dual',
+      metadata: { itemType: 'Report', title: 'Evidence report', publicationDate: '2026-05-20', creators: [{ type: 'personal', name: 'B, A', familyName: 'B', affiliations: [{ name: 'Gone', ror: '0abcdef12' }] }], tags: [] }
+    })).rejects.toThrow('Invalid date.');
   });
 
   it('reconciles a retryable publish failure by reading the published record before retrying publish', async () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions/502440/actions/publish')) {
         return Promise.resolve({
           ok: false,
@@ -1099,6 +1139,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions/502440/actions/publish')) return Promise.resolve(response({ record_id: 502440 }));
       if (url.endsWith('/api/records/502440')) {
         return Promise.resolve({
@@ -1130,6 +1171,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions/502440/actions/publish')) {
         return Promise.resolve({
           ok: false,
@@ -1186,7 +1228,7 @@ describe('ZenodoApiClient', () => {
       }
 
       if (url.includes('/api/files/bucket-1/')) return Promise.resolve(response({ key: 'report.pdf' }));
-      if (url.endsWith('/api/deposit/depositions/502440')) {
+      if (url.endsWith('/api/records/502440/draft')) {
         return Promise.resolve({
           ok: false,
           status: 503,
@@ -1236,6 +1278,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly method: string | undefined; readonly url: string }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ method: init.method, url });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions')) {
         return Promise.resolve(response({
           id: 502440,
@@ -1300,6 +1343,18 @@ describe('ZenodoApiClient', () => {
     });
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      if (url.endsWith('/api/records/502440/draft') && init.method === 'PUT') {
+        metadataAttempts += 1;
+        if (metadataAttempts === 1) {
+          return Promise.resolve({
+            ok: false,
+            status: 503,
+            json: () => Promise.resolve({ message: 'temporary Zenodo metadata outage' }),
+            text: () => Promise.resolve('temporary Zenodo metadata outage')
+          });
+        }
+      }
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions')) {
         return Promise.resolve(response({
           id: 502440,
@@ -1311,19 +1366,6 @@ describe('ZenodoApiClient', () => {
       }
 
       if (url.includes('/api/files/bucket-1/')) return Promise.resolve(response({ key: 'report.pdf' }));
-      if (url.endsWith('/api/deposit/depositions/502440')) {
-        metadataAttempts += 1;
-        if (metadataAttempts === 1) {
-          return Promise.resolve({
-            ok: false,
-            status: 503,
-            json: () => Promise.resolve({ message: 'temporary Zenodo metadata outage' }),
-            text: () => Promise.resolve('temporary Zenodo metadata outage')
-          });
-        }
-        return Promise.resolve(response({ id: 502440 }));
-      }
-
       throw new Error(`unexpected URL ${url}`);
     };
     const client = new ZenodoApiClient({
@@ -1362,14 +1404,16 @@ describe('ZenodoApiClient', () => {
     expect(calls.map((call) => `${call.init.method} ${call.url}`)).toEqual([
       'POST https://sandbox.zenodo.org/api/deposit/depositions',
       'PUT https://sandbox.zenodo.org/api/files/bucket-1/report.pdf',
-      'PUT https://sandbox.zenodo.org/api/deposit/depositions/502440',
-      'PUT https://sandbox.zenodo.org/api/deposit/depositions/502440'
+      'GET https://sandbox.zenodo.org/api/records/502440/draft',
+      'PUT https://sandbox.zenodo.org/api/records/502440/draft',
+      'PUT https://sandbox.zenodo.org/api/records/502440/draft'
     ]);
   });
 
   it('makes duplicate Zenodo upload filenames deterministic before bucket upload', async () => {
     const uploadedUrls: string[] = [];
     const fetch: ZenodoFetchLike = (url, init) => {
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions')) {
         return Promise.resolve({
           ok: true,
@@ -1447,6 +1491,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions/502440/actions/newversion')) {
         return Promise.resolve(response({
           links: {
@@ -1519,7 +1564,8 @@ describe('ZenodoApiClient', () => {
       'GET https://sandbox.zenodo.org/api/deposit/depositions/502441/files',
       'PUT https://sandbox.zenodo.org/api/files/bucket-2/report-v2.pdf',
       'DELETE https://sandbox.zenodo.org/api/deposit/depositions/502441/files/old-file-id',
-      'PUT https://sandbox.zenodo.org/api/deposit/depositions/502441',
+      'GET https://sandbox.zenodo.org/api/records/502441/draft',
+      'PUT https://sandbox.zenodo.org/api/records/502441/draft',
       'POST https://sandbox.zenodo.org/api/deposit/depositions/502441/actions/publish',
       'GET https://sandbox.zenodo.org/api/records/502441'
     ]);
@@ -1529,6 +1575,7 @@ describe('ZenodoApiClient', () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
     const fetch: ZenodoFetchLike = (url, init) => {
       calls.push({ url, init });
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       if (url.endsWith('/api/deposit/depositions/502440/actions/newversion')) {
         return Promise.resolve(response({
           links: {
@@ -1602,6 +1649,7 @@ describe('empty Zenodo draft preparation', () => {
     const requests: {url: string; method: string | undefined; body: BodyInit | null | undefined}[] = [];
     const persisted: unknown[] = [];
     const client = new ZenodoApiClient({endpoint: 'https://zenodo.org', fetch: (url, init) => {
+      { const answer = draftAnswer(url, init); if (answer) return answer; }
       requests.push({url, method: init.method, body: init.body});
       return Promise.resolve(response(legacyDeposition('700001')));
     }});
@@ -1618,6 +1666,7 @@ it.each([false, true])('fills and publishes a saved draft; missing=%s', async (m
   const client = new ZenodoApiClient({endpoint: 'https://sandbox.zenodo.org', fetch: (url, init) => {
     const path = new URL(url).pathname;
     calls.push(`${init.method} ${path}`);
+    { const answer = draftAnswer(url, init); if (answer) return answer; }
     if (missing && path === '/api/deposit/depositions/700001') return Promise.resolve({...response({}), ok: false, status: 404});
     if (path === '/api/deposit/depositions' || path === `/api/deposit/depositions/${id}`) {
       return Promise.resolve(response({...legacyDeposition(id), links: {bucket: 'https://sandbox.zenodo.org/api/files/saved-bucket'}}));
@@ -1635,6 +1684,6 @@ it.each([false, true])('fills and publishes a saved draft; missing=%s', async (m
   expect(published.latestRecordId).toBe(id);
   expect(calls.filter(call => call === 'POST /api/deposit/depositions')).toHaveLength(missing ? 1 : 0);
   expect(calls).toContain('GET /api/deposit/depositions/700001');
-  expect(calls).toContain(`PUT /api/deposit/depositions/${id}`);
+  expect(calls).toContain(`PUT /api/records/${id}/draft`);
   expect(calls).toContain(`POST /api/deposit/depositions/${id}/actions/publish`);
 });

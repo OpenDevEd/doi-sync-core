@@ -179,7 +179,7 @@ describe('provider-neutral publication planner', () => {
     if (plan.status !== 'write_required') throw new Error('expected write-required plan');
     expect(plan.operations.map(({ type }) => type)).toEqual(['zenodo_create']);
     const payload = JSON.stringify(plan.snapshots.zenodoPayload);
-    expect(payload).toContain('"doi":"10.1080/09500693.2021.1887"');
+    expect(payload).toContain('"pids":{"doi":{"identifier":"10.1080/09500693.2021.1887","provider":"external"}}');
     expect(payload).not.toContain('prereserve_doi');
   });
 

@@ -78,13 +78,18 @@ export {
 } from './publication/file-corrections.js';
 export type { ZenodoFileCorrectionApproval } from './publication/file-corrections.js';
 export {
+	CREDIT_ROLES,
 	parsePublicationIdentifiers,
 	parsePublicationRecordSnapshot
 } from './publication/record.js';
+export { isOpenLicense, licenseUrlOf } from './publication/licenses.js';
 export type {
 	CrossrefDepositMetadata,
+	CreditRole,
+	PublicationAffiliation,
 	PublicationCreator,
 	PublicationFunding,
+	PublicationLocation,
 	PublicationIdentifiers,
 	PublicationMetadata,
 	PublicationProviderMetadata,
@@ -195,27 +200,22 @@ export type {
 	ZenodoPublicationType,
 	ZenodoResourceType
 } from './zenodo/resource-mapper.js';
-export {
-	buildZenodoWritePayload,
-	parseZenodoLegacyDepositionPayload,
-	ZENODO_INVENIORDM_ACCEPT
-} from './zenodo/records.js';
+export { ZENODO_INVENIORDM_ACCEPT } from './zenodo/records.js';
+export { buildZenodoRecordPayload, resourceTypeId } from './zenodo/rdm-payload.js';
+export type { DoiPolicy, ZenodoKnownRors, ZenodoRecordPayload, ZenodoRecordPayloadInput } from './zenodo/rdm-payload.js';
 export type {
-	DoiPolicy,
 	ZenodoDoiLookupResult,
 	ZenodoLegacyDepositionIdentifiers,
-	ZenodoLegacyDepositionPayload,
 	ZenodoPublishedRecordVerification,
 	ZenodoRecordFileSnapshot,
 	ZenodoRecordIdentifiers,
 	ZenodoRecordSnapshot,
 	ZenodoUnsubmittedDraftDoiLookupResult,
-	ZenodoVerificationResult,
-	ZenodoWritePayloadInput
+	ZenodoVerificationResult
 } from './zenodo/records.js';
 export {
 	parseZenodoLegacyDepositionFiles,
-	verifyZenodoLegacyDepositionState
+	verifyZenodoRecordState
 } from './zenodo/verification.js';
 export type {
 	ZenodoExpectedPublishedFile,

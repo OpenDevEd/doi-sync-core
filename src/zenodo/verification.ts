@@ -2,26 +2,7 @@ import { asBoolean, asRecord, asString } from '../guards.js';
 import { stableJson, type JsonValue } from '../hash.js';
 import { asJsonObject, toJsonValue, type JsonObject } from '../json.js';
 import { compareCodeUnits } from '../sort.js';
-import type { ZenodoLegacyDepositionPayload } from './records.js';
-
-const MANAGED_METADATA_KEYS = [
-	'access_right',
-	'contributors',
-	'creators',
-	'description',
-	'doi',
-	'image_type',
-	'imprint_publisher',
-	'keywords',
-	'language',
-	'license',
-	'notes',
-	'publication_date',
-	'publication_type',
-	'thesis_university',
-	'title',
-	'upload_type'
-] as const;
+import type { ZenodoRecordPayload } from './rdm-payload.js';
 
 export interface ZenodoExpectedPublishedFile {
 	readonly filename: string;
@@ -44,24 +25,29 @@ export type ZenodoPublishedStateVerification =
 		readonly fileReasons: readonly string[];
 	};
 
-export function verifyZenodoLegacyDepositionState(input: {
-	readonly response: unknown;
-	readonly expectedPayload: ZenodoLegacyDepositionPayload;
+/**
+ * Whether a published record holds what was written: the deposition for its state and files, the record in the
+ * InvenioRDM format for its metadata. Zenodo fills in what it knows about a vocabulary entry (a ROR's name, a
+ * licence's title), so each written value is looked for in what Zenodo holds, not compared with all of it.
+ */
+export function verifyZenodoRecordState(input: {
+	readonly deposition: unknown;
+	readonly record: unknown;
+	readonly expectedPayload: ZenodoRecordPayload;
 	readonly expectedFiles: readonly ZenodoExpectedPublishedFile[];
 }): ZenodoPublishedStateVerification {
-	const deposition = asRecord(input.response);
+	const deposition = asRecord(input.deposition);
 	if (!deposition) throw new Error('Expected Zenodo deposition response object');
 	if (asBoolean(deposition['submitted']) !== true || asString(deposition['state']) !== 'done') {
 		throw new Error('Expected a published Zenodo deposition with submitted=true and state=done');
 	}
-	const rawMetadata = asRecord(deposition['metadata']);
-	if (!rawMetadata) throw new Error('Expected Zenodo deposition metadata object');
-	const metadata = asJsonObject(toJsonValue(rawMetadata));
-	if (!metadata) throw new Error('Expected Zenodo deposition metadata object');
-	const metadataReasons = managedMetadataDifferences(
-		metadata,
-		input.expectedPayload.metadata
-	);
+	const record = asJsonObject(toJsonValue(asRecord(input.record) ?? null));
+	if (!record) throw new Error('Expected Zenodo record object');
+	const metadataReasons = [
+		...differences(input.expectedPayload.metadata, record['metadata'], 'metadata'),
+		...differences(input.expectedPayload.custom_fields, record['custom_fields'], 'custom_fields'),
+		...(input.expectedPayload.pids ? differences(input.expectedPayload.pids, record['pids'], 'pids') : [])
+	].sort(compareCodeUnits);
 	const fileReasons = publishedFileDifferences(
 		parseZenodoLegacyDepositionFiles(deposition['files']),
 		input.expectedFiles
@@ -69,6 +55,21 @@ export function verifyZenodoLegacyDepositionState(input: {
 	return metadataReasons.length === 0 && fileReasons.length === 0
 		? { status: 'matched' }
 		: { status: 'drifted', metadataReasons, fileReasons };
+}
+
+/** Where `held` lacks what `wrote` gave: each key written, each list entry in order, each text with its spaces evened out. */
+function differences(wrote: JsonValue | undefined, held: JsonValue | undefined, path: string): readonly string[] {
+	if (Array.isArray(wrote)) {
+		if (!Array.isArray(held) || held.length !== wrote.length) return [path];
+		const list = held as readonly JsonValue[];
+		return (wrote as readonly JsonValue[]).flatMap((entry, index) => differences(entry, list[index], `${path}.${index}`)).length ? [path] : [];
+	}
+	if (wrote && typeof wrote === 'object') {
+		if (!held || typeof held !== 'object' || Array.isArray(held)) return [path];
+		return Object.entries(wrote).flatMap(([key, entry]) => differences(entry, (held as JsonObject)[key], `${path}.${key}`));
+	}
+	if (typeof wrote === 'string' && typeof held === 'string') return wrote.replace(/\s+/gu, ' ').trim() === held.replace(/\s+/gu, ' ').trim() ? [] : [path];
+	return stableJson(wrote ?? null) === stableJson(held ?? null) ? [] : [path];
 }
 
 export function parseZenodoLegacyDepositionFiles(response: unknown): readonly ZenodoLegacyDepositionFile[] {
@@ -90,52 +91,6 @@ export function parseZenodoLegacyDepositionFiles(response: unknown): readonly Ze
 			...(md5 ? { md5 } : {})
 		};
 	});
-}
-
-function managedMetadataDifferences(
-	observed: Readonly<Record<string, JsonValue>>,
-	expected: Readonly<Record<string, JsonValue>>
-): readonly string[] {
-	return MANAGED_METADATA_KEYS.flatMap((key) => {
-		if (key === 'doi' && expected[key] === undefined) return [];
-		const observedValue = withoutNullFields(normalizeManagedMetadataValue(key, observed[key]));
-		const expectedValue = withoutNullFields(normalizeManagedMetadataValue(key, expected[key]));
-		return stableJson(observedValue) === stableJson(expectedValue)
-			? []
-			: [`metadata.${key}`];
-	}).sort(compareCodeUnits);
-}
-
-/** Zenodo echoes optional fields it never received as null (creators' affiliation, orcid); absent and null mean the same. */
-function withoutNullFields(value: JsonValue | undefined): JsonValue | undefined {
-	if (Array.isArray(value)) return value.map((entry: JsonValue) => withoutNullFields(entry) ?? null);
-	if (value && typeof value === 'object') {
-		const result: Record<string, JsonValue> = {};
-		for (const [key, entry] of Object.entries(value as JsonObject)) {
-			if (entry !== null) result[key] = withoutNullFields(entry) ?? null;
-		}
-		return result;
-	}
-	return value;
-}
-
-function normalizeManagedMetadataValue(
-	key: typeof MANAGED_METADATA_KEYS[number],
-	value: JsonValue | undefined
-): JsonValue | undefined {
-	if (key === 'contributors') {
-		if (!Array.isArray(value)) return undefined;
-		const hostingInstitutions = value.filter((entry) => (
-			asString(asRecord(entry)?.['type']) === 'HostingInstitution'
-		));
-		return hostingInstitutions.length > 0 ? hostingInstitutions : undefined;
-	}
-	if (key === 'keywords' && Array.isArray(value)) {
-		return value
-			.filter((entry): entry is string => typeof entry === 'string')
-			.sort(compareCodeUnits);
-	}
-	return value;
 }
 
 function publishedFileDifferences(

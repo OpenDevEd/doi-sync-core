@@ -120,7 +120,7 @@ describe('Crossref diagnostic response parsing', () => {
           creatorType: 'author',
           givenName: 'Ada',
           familyName: 'Lovelace',
-          affiliation: 'OpenDevEd',
+          affiliations: ['OpenDevEd'],
           orcid: 'https://orcid.org/0000-0002-1825-0097'
         },
         {

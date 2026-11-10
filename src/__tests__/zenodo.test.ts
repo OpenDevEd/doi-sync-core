@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildZenodoRecordPayload } from '../zenodo/rdm-payload.js';
 import {
-	buildZenodoWritePayload,
 	parseZenodoLegacyDepositionIdentifiers,
 	parseZenodoRecordIdentifiers,
 	ZENODO_INVENIORDM_ACCEPT
@@ -23,114 +23,123 @@ const metadata = {
 };
 
 describe('Zenodo records', () => {
-    it('omits an absent description and removes an old managed description', () => {
-        expect(buildZenodoWritePayload({doiPolicy: 'dual', metadata: {...metadata, abstract: undefined}, existingMetadata: {description: 'Old abstract'}}).metadata).not.toHaveProperty('description');
-    });
 	it('uses the current InvenioRDM accept header', () => {
 		expect(ZENODO_INVENIORDM_ACCEPT).toBe('application/vnd.inveniordm.v1+json');
 	});
 
-	it('omits client-supplied DOI fields when Zenodo mints the DOI', () => {
-		expect(buildZenodoWritePayload({
-			doiPolicy: 'dual',
-			metadata,
-			existingMetadata: {
-				doi: '10.53832/opendeved.1205',
-				prereserve_doi: { doi: '10.5072/zenodo.42' }
-			}
-		}).metadata).toMatchObject({
-			title: 'Evidence report',
-			publication_date: '2026-05-20'
-		});
-		expect(buildZenodoWritePayload({ doiPolicy: 'dual', metadata }).metadata).not.toHaveProperty('doi');
-	});
-
-	it('requires and emits the managed Crossref DOI for external DOI records', () => {
-		expect(buildZenodoWritePayload({
-			doiPolicy: 'external-crossref', metadata
-		}).metadata['doi']).toBe('10.53832/opendeved.1205');
-		const withoutDoi = {
-			itemType: metadata.itemType,
-			title: metadata.title,
-			publicationDate: metadata.publicationDate,
-			abstract: metadata.abstract,
-			creators: metadata.creators,
-			tags: metadata.tags
-		};
-		expect(() => buildZenodoWritePayload({
-			doiPolicy: 'external-crossref', metadata: withoutDoi
-		})).toThrow('requires a DOI');
-	});
-
-	it('preserves provider-owned metadata while replacing managed fields', () => {
-		const payload = buildZenodoWritePayload({
-			doiPolicy: 'dual',
-			metadata: { ...metadata, title: 'Updated title' },
-			existingMetadata: {
-				title: 'Old title',
-				license: 'cc-by-4.0',
-				communities: [{ identifier: 'opendeved' }]
+	it('writes every field a record holds in the InvenioRDM format, and a ROR Zenodo lacks by name', () => {
+		const payload = buildZenodoRecordPayload({
+			doiPolicy: 'external-crossref',
+			resourceUrl: 'https://openscholar.ai/papers/R100001',
+			known: { affiliations: new Set(['01ggx4157']), funders: new Set(['021nxhr62']) },
+			metadata: {
+				...metadata,
+				subtitle: 'Evidence from Malawi',
+				creators: [
+					{
+						type: 'personal', name: 'Banda, Chikondi', givenName: 'Chikondi', familyName: 'Banda', orcid: 'https://orcid.org/0000-0002-1825-0097',
+						corresponding: true, roles: ['conceptualization'],
+						affiliations: [{ name: 'CERN', ror: '01ggx4157', country: 'CH' }, { name: 'Unknown institute', ror: '0abcdef12' }]
+					},
+					{ type: 'personal', name: 'Okafor, Ada', givenName: 'Ada', familyName: 'Okafor', creatorType: 'editor' },
+					{ type: 'organizational', name: 'World Health Organization', ror: '01f80g185' }
+				],
+				subjects: ['Climate change impacts on agriculture', 'SDG 2: Zero hunger'],
+				methods: 'Observational study',
+				locations: [{ place: 'Malawi', country: 'MW' }],
+				pages: 12,
+				formats: ['application/pdf'],
+				copyright: '© 2026 The authors',
+				withdrawnOn: '2026-11-10',
+				funding: [
+					{ funderName: 'National Science Foundation', funderRor: '021nxhr62', awards: ['CHE-1152342', 'CBET-106'] },
+					{ funderName: 'A funder Zenodo lacks', funderRor: '0zzzzzz12', awards: [] }
+				],
+				references: ['https://doi.org/10.1038/NATURE12373'],
+				relations: [
+					{ type: 'isSupplementedBy', identifierType: 'doi', identifier: '10.5281/zenodo.42', description: 'Data' },
+					{ type: 'hasVersion', identifierType: 'uri', identifier: 'https://example.org/preprint' }
+				],
+				fields: { seriesTitle: 'Openscholar Reports', ISSN: '2049-3630', reportNumber: 'R100001', place: 'Nairobi, Kenya' }
 			}
 		});
+
+		expect(payload.pids).toEqual({ doi: { identifier: '10.53832/opendeved.1205', provider: 'external' } });
 		expect(payload.metadata).toMatchObject({
-			title: 'Updated title',
-			license: 'cc-by-4.0',
-			communities: [{ identifier: 'opendeved' }],
-			keywords: ['evidence'],
-			notes: 'Copyright OpenDevEd',
-			language: 'eng',
-			imprint_publisher: 'OpenDevEd Press',
-			contributors: [{ name: 'Open Development & Education', type: 'HostingInstitution' }]
+			resource_type: { id: 'publication-report' },
+			title: 'Evidence report',
+			additional_titles: [{ title: 'Evidence from Malawi', type: { id: 'subtitle' } }],
+			publisher: 'OpenDevEd Press',
+			creators: [
+				{
+					person_or_org: { type: 'personal', given_name: 'Chikondi', family_name: 'Banda', identifiers: [{ scheme: 'orcid', identifier: '0000-0002-1825-0097' }] },
+					affiliations: [{ id: '01ggx4157' }, { name: 'Unknown institute' }],
+					role: { id: 'contactperson' }
+				},
+				{ person_or_org: { type: 'organizational', name: 'World Health Organization', identifiers: [{ scheme: 'ror', identifier: '01f80g185' }] } }
+			],
+			contributors: [
+				{ person_or_org: { type: 'personal', given_name: 'Ada', family_name: 'Okafor' }, role: { id: 'editor' } },
+				{ person_or_org: { type: 'organizational', name: 'Open Development & Education' }, role: { id: 'hostinginstitution' } }
+			],
+			additional_descriptions: [
+				{ description: 'Observational study', type: { id: 'methods' } },
+				{ description: 'Openscholar Reports, ISSN 2049-3630', type: { id: 'series-information' } },
+				{ description: 'Copyright OpenDevEd', type: { id: 'other' } }
+			],
+			rights: [{ id: 'cc-by-4.0' }],
+			copyright: '© 2026 The authors',
+			subjects: [{ subject: 'Climate change impacts on agriculture' }, { subject: 'SDG 2: Zero hunger' }, { subject: 'evidence' }],
+			languages: [{ id: 'eng' }],
+			dates: [{ date: '2026-11-10', type: { id: 'withdrawn' } }],
+			identifiers: [{ identifier: 'https://openscholar.ai/papers/R100001', scheme: 'url' }, { identifier: 'R100001', scheme: 'other' }],
+			related_identifiers: [
+				{ identifier: '10.5281/zenodo.42', scheme: 'doi', relation_type: { id: 'issupplementedby' } },
+				{ identifier: 'https://example.org/preprint', scheme: 'url', relation_type: { id: 'hasversion' } },
+				{ identifier: '2049-3630', scheme: 'issn', relation_type: { id: 'ispartof' } }
+			],
+			sizes: ['12 pages'],
+			formats: ['application/pdf'],
+			locations: { features: [{ place: 'Malawi' }] },
+			funding: [
+				{ funder: { id: '021nxhr62' }, award: { number: 'CHE-1152342', title: { en: 'CHE-1152342' } } },
+				{ funder: { id: '021nxhr62' }, award: { number: 'CBET-106', title: { en: 'CBET-106' } } },
+				{ funder: { name: 'A funder Zenodo lacks' } }
+			],
+			references: [{ reference: 'https://doi.org/10.1038/nature12373', identifier: '10.1038/nature12373', scheme: 'doi' }]
 		});
+		expect(payload.custom_fields).toEqual({ 'imprint:imprint': { title: 'Openscholar Reports', place: 'Nairobi, Kenya' } });
 	});
 
-	it('preserves provider-owned contributor roles while replacing only the managed institution', () => {
-		const payload = buildZenodoWritePayload({
-			doiPolicy: 'dual',
-			metadata,
-			existingMetadata: {
-				contributors: [
-					{ name: 'Editor One', type: 'Editor' },
-					{ name: 'Old Institution', type: 'HostingInstitution' },
-					{ name: 'Curator One', type: 'DataCurator' }
-				]
-			}
-		});
-
-		expect(payload.metadata['contributors']).toEqual([
-			{ name: 'Editor One', type: 'Editor' },
-			{ name: 'Curator One', type: 'DataCurator' },
-			{ name: 'Open Development & Education', type: 'HostingInstitution' }
-		]);
+	it('leaves the DOI to Zenodo when it mints one', () => {
+		expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata })).not.toHaveProperty('pids');
+		const withoutDoi = Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== 'doi')) as Omit<typeof metadata, 'doi'>;
+		expect(() => buildZenodoRecordPayload({ doiPolicy: 'external-crossref', metadata: withoutDoi })).toThrow('requires a DOI');
 	});
 
-	it('emits the precise resource type and clears obsolete conditional fields', () => {
-		expect(buildZenodoWritePayload({
-			doiPolicy: 'dual',
-			metadata: { ...metadata, itemType: 'Dataset' },
-			existingMetadata: { publication_type: 'report', image_type: 'figure' }
-		}).metadata).toMatchObject({ upload_type: 'dataset' });
-		expect(buildZenodoWritePayload({
-			doiPolicy: 'dual', metadata: { ...metadata, itemType: 'Dataset' }
-		}).metadata).not.toHaveProperty('publication_type');
+	it('names the type, the journal, the conference and the thesis in Zenodo\'s fields', () => {
+		const journal = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'JournalArticle', fields: { publicationTitle: 'Evidence Journal', ISSN: '2049-3630', volume: '12', issue: '3', pages: '10-24' } } });
+		expect(journal.metadata['resource_type']).toEqual({ id: 'publication-article' });
+		expect(journal.custom_fields).toEqual({ 'journal:journal': { title: 'Evidence Journal', issn: '2049-3630', volume: '12', issue: '3', pages: '10-24' } });
+		const paper = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'ConferencePaper', fields: { conferenceName: 'Evidence Conference', proceedingsTitle: 'Proceedings', place: 'London, UK' } } });
+		expect(paper.custom_fields).toEqual({ 'imprint:imprint': { title: 'Proceedings', place: 'London, UK' }, 'meeting:meeting': { title: 'Evidence Conference', place: 'London, UK' } });
+		const thesis = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'Thesis', fields: { thesisType: 'PhD' } } });
+		expect(thesis.custom_fields).toEqual({ 'thesis:thesis': { university: 'Open Development & Education', type: 'PhD' } });
+		expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'Map' } }).metadata['resource_type']).toEqual({ id: 'image-other' });
 	});
 
 	it('rejects child records because attachments are published as files, not records', () => {
-		expect(() => buildZenodoWritePayload({
-			doiPolicy: 'dual', metadata: { ...metadata, itemType: 'Attachment' }
-		})).toThrow('cannot publish Evidence Library item type Attachment');
+		expect(() => buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, itemType: 'Attachment' } })).toThrow('item type Attachment');
 	});
 
-	it('appends the public landing URL idempotently', () => {
-		const resourceUrl = 'https://example.org/items/ABC12345';
-		const once = buildZenodoWritePayload({ doiPolicy: 'dual', metadata, resourceUrl });
+	it('links the public landing page once, however often the description is built', () => {
+		const resourceUrl = 'https://example.org/items/ABC?x=1&y=2';
+		const once = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata, resourceUrl });
 		const description = once.metadata['description'];
-		expect(typeof description).toBe('string');
-		const twice = buildZenodoWritePayload({
-			doiPolicy: 'dual', metadata: { ...metadata, abstract: typeof description === 'string' ? description : '' }, resourceUrl
-		});
+		const twice = buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, abstract: typeof description === 'string' ? description : '' }, resourceUrl });
 		const finalDescription = twice.metadata['description'];
 		expect(typeof finalDescription === 'string' ? finalDescription.match(/Available from/g) : null).toHaveLength(1);
+		expect(finalDescription).toContain('https://example.org/items/ABC?x=1&amp;y=2');
 	});
 
 	it('parses published record and concept identifiers', () => {

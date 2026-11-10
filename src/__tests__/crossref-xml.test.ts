@@ -88,7 +88,7 @@ describe('Crossref 5.5 publication XML', () => {
 			title: 'Evidence\u0001 report',
 			creators: [{
 				type: 'personal', name: 'Lovelace, Ada', givenName: 'Ada', familyName: 'Lovelace',
-				affiliation: 'Open\u0002DevEd', orcid: '0000-0002-1825-0097'
+				affiliations: [{ name: 'Open\u0002DevEd' }], orcid: '0000-0002-1825-0097'
 			}]
 		});
 		const xml = buildCrossrefPublicationXml(xmlInput(record));
@@ -102,7 +102,7 @@ describe('Crossref 5.5 publication XML', () => {
 	it('deposits a work\'s funders, cited DOIs and relations beside the archive link', () => {
 		const xml = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', WORK_DETAILS), ARCHIVE_RELATION));
 
-		expect(xml).toContain('<fr:assertion name="funder_name">National Science Foundation<fr:assertion name="funder_identifier">https://doi.org/10.13039/100000001</fr:assertion></fr:assertion><fr:assertion name="award_number">CHE-1152342</fr:assertion><fr:assertion name="award_number">CBET-106</fr:assertion>');
+		expect(xml).toContain('<fr:assertion name="funder_name">National Science Foundation<fr:assertion name="funder_identifier">https://doi.org/10.13039/100000001</fr:assertion></fr:assertion><fr:assertion name="ror">https://ror.org/021nxhr62</fr:assertion><fr:assertion name="award_number">CHE-1152342</fr:assertion><fr:assertion name="award_number">CBET-106</fr:assertion>');
 		expect(xml).toContain('<citation key="ref1"><doi>10.1000/cited.1</doi></citation><citation key="ref2"><doi>10.1000/cited.2</doi></citation>');
 		expect(xml.match(/<rel:related_item>/g)).toHaveLength(3);
 	});
@@ -115,6 +115,17 @@ describe('Crossref 5.5 publication XML', () => {
 		expect(cleared).toContain('<rel:program/>');
 		expect(cleared).toContain('<citation_list/>');
 		expect(untouched).not.toMatch(/fr:program|rel:program|citation_list/);
+	});
+
+	it('deposits the subtitle, roles, affiliations by ROR and country, the funder\'s ROR, the licence and the full text', () => {
+		const xml = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', WORK_DETAILS)));
+
+		expect(xml).toContain('<titles><title>Evidence &amp; impact</title><subtitle>Evidence from Malawi</subtitle></titles>');
+		expect(xml).toContain('<role vocab="credit" type="conceptualization"/><role vocab="credit" type="writing-original-draft"/><role vocab="crossref" type="corresponding-author"/>');
+		expect(xml).toContain('<institution><institution_name>CERN</institution_name><institution_id type="ror">https://ror.org/01ggx4157</institution_id><institution_place>Switzerland</institution_place></institution><institution><institution_name>A typed institute</institution_name></institution>');
+		expect(xml).toContain('<fr:assertion name="ror">https://ror.org/021nxhr62</fr:assertion>');
+		expect(xml).toContain('<ai:program name="AccessIndicators"><ai:free_to_read/><ai:license_ref applies_to="vor">https://creativecommons.org/licenses/by/4.0/legalcode</ai:license_ref><ai:license_ref applies_to="tdm">https://creativecommons.org/licenses/by/4.0/legalcode</ai:license_ref></ai:program>');
+		expect(xml).toContain('<collection property="text-mining"><item><resource mime_type="application/pdf">https://openscholar.ai/papers/R100001/pdf</resource></item></collection><collection property="crawler-based"><item crawler="similarity-check"><resource>https://openscholar.ai/papers/R100001/pdf</resource></item></collection>');
 	});
 
 	it('deposits a report in a series with an ISSN as series metadata', () => {
@@ -140,8 +151,19 @@ describe('Crossref 5.5 publication XML', () => {
 });
 
 const WORK_DETAILS = {
+	subtitle: 'Evidence from Malawi',
+	license: 'cc-by-4.0',
+	fullTextUrl: 'https://openscholar.ai/papers/R100001/pdf',
+	creators: [
+		{
+			type: 'personal', name: 'Banda, Chikondi', givenName: 'Chikondi', familyName: 'Banda', orcid: '0000-0002-1825-0097',
+			roles: ['conceptualization', 'writing-original-draft'], corresponding: true,
+			affiliations: [{ name: 'CERN', ror: '01ggx4157', country: 'CH' }, { name: 'A typed institute' }]
+		},
+		{ type: 'organizational', name: 'World Health Organization', ror: '01f80g185' }
+	],
 	funding: [
-		{ funderName: 'National Science Foundation', funderIdentifier: 'https://doi.org/10.13039/100000001', awards: ['CHE-1152342', 'CBET-106'] },
+		{ funderName: 'National Science Foundation', funderIdentifier: 'https://doi.org/10.13039/100000001', funderRor: '021nxhr62', awards: ['CHE-1152342', 'CBET-106'] },
 		{ funderName: 'A funder with no identifier', awards: [] }
 	],
 	references: ['https://doi.org/10.1000/Cited.1', '10.1000/cited.2'],

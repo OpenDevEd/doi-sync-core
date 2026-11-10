@@ -5,16 +5,22 @@ import type { PublicationRecordSnapshot } from '../publication/record.js';
 import {
 	buildCrossrefPayloadSnapshot, buildPublicationPayloadHash, buildZenodoPayloadSnapshot
 } from '../snapshots.js';
-import { buildZenodoWritePayload } from '../zenodo/records.js';
+import { buildZenodoRecordPayload } from '../zenodo/rdm-payload.js';
 import { buildZenodoProviderMetadata } from '../zenodo/publication-mapper.js';
 
 describe('publication payload snapshots', () => {
 	it('keeps the Crossref hash stable when metadata omitted from its wire contract changes', () => {
-		const before = mappedCrossref({ tags: ['evidence'], license: 'cc-by-4.0', rights: 'Copyright' });
-		const after = mappedCrossref({ tags: ['different'], license: 'cc0-1.0', rights: 'Public domain' });
+		const before = mappedCrossref({ tags: ['evidence'], rights: 'Copyright' });
+		const after = mappedCrossref({ tags: ['different'], rights: 'Public domain' });
 
 		expect(buildPublicationPayloadHash(buildCrossrefPayloadSnapshot({ record: after }))).toBe(
 			buildPublicationPayloadHash(buildCrossrefPayloadSnapshot({ record: before }))
+		);
+	});
+
+	it('changes the Crossref hash when the licence changes, which the deposit carries', () => {
+		expect(buildPublicationPayloadHash(buildCrossrefPayloadSnapshot({ record: mappedCrossref({ license: 'cc0-1.0' }) }))).not.toBe(
+			buildPublicationPayloadHash(buildCrossrefPayloadSnapshot({ record: mappedCrossref({ license: 'cc-by-4.0' }) }))
 		);
 	});
 
@@ -55,16 +61,16 @@ describe('publication payload snapshots', () => {
 
 		expect(snapshot).toMatchObject({
 			metadata: {
-				upload_type: 'dataset',
-				keywords: ['education', 'evidence'],
-				license: 'cc-by-4.0',
-				notes: 'Copyright OpenDevEd',
-				language: 'eng',
-				contributors: [{ name: 'OpenDevEd', type: 'HostingInstitution' }]
+				resource_type: { id: 'dataset' },
+				subjects: [{ subject: 'education' }, { subject: 'evidence' }],
+				rights: [{ id: 'cc-by-4.0' }],
+				additional_descriptions: [{ description: 'Copyright OpenDevEd', type: { id: 'other' } }],
+				languages: [{ id: 'eng' }],
+				contributors: [{ person_or_org: { type: 'organizational', name: 'OpenDevEd' }, role: { id: 'hostinginstitution' } }]
 			}
 		});
 		expect(snapshot).not.toHaveProperty('record.fields');
-		expect(snapshot).toEqual(buildZenodoWritePayload({
+		expect(snapshot).toEqual(buildZenodoRecordPayload({
 			doiPolicy: 'dual',
 			metadata: buildZenodoProviderMetadata({
 				record: record(), identifiers: {}, identifierPolicy: 'mint-zenodo'

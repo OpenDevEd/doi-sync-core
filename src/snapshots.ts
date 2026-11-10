@@ -12,7 +12,7 @@ import type {
 	PublicationRecordSnapshot
 } from './publication/record.js';
 import type { ZenodoIdentifierPolicy } from './publication/targets.js';
-import { buildZenodoWritePayload } from './zenodo/records.js';
+import { buildZenodoRecordPayload } from './zenodo/rdm-payload.js';
 import { buildZenodoProviderMetadata } from './zenodo/publication-mapper.js';
 
 export const CROSSREF_PAYLOAD_FORMAT = 'doi-sync-core-crossref-publication-1';
@@ -46,7 +46,7 @@ export function buildCrossrefPayloadSnapshot(input: BuildCrossrefPayloadSnapshot
 }
 
 export function buildZenodoPayloadSnapshot(input: BuildZenodoPayloadSnapshotInput): JsonValue {
-	const payload = buildZenodoWritePayload({
+	const payload = buildZenodoRecordPayload({
 		doiPolicy: input.identifierPolicy === 'mint-zenodo' ? 'dual' : 'external-crossref',
 		metadata: buildZenodoProviderMetadata({
 			record: input.record,

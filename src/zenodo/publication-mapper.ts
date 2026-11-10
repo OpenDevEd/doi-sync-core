@@ -64,6 +64,9 @@ export function validateZenodoPublicationRecord(
 	return issues;
 }
 
+/** What a snapshot holds about itself rather than about the work. */
+const SNAPSHOT_ONLY = new Set(['recordKey', 'canonicalRevision', 'landingUrl']);
+
 export function buildZenodoProviderMetadata(input: {
 	readonly record: PublicationRecordSnapshot;
 	readonly identifiers: PublicationIdentifiers;
@@ -74,18 +77,12 @@ export function buildZenodoProviderMetadata(input: {
 	const { record } = input;
 	const language = record.language ? normalizeZenodoLanguage(record.language) : undefined;
 	const reusedDoi = zenodoReusedDoi(input.identifierPolicy, input.identifiers);
+	// Everything the record gives, with Zenodo's language code and licence ID, and the DOI it reuses.
+	const metadata = Object.fromEntries(Object.entries(record).filter(([key]) => !SNAPSHOT_ONLY.has(key))) as PublicationMetadata & { readonly fields: PublicationRecordSnapshot['fields'] };
 	return {
-		itemType: record.itemType,
-		title: record.title,
-		publicationDate: record.publicationDate,
-		...(record.abstract ? { abstract: record.abstract } : {}),
+		...metadata,
 		...(language ? { language } : {}),
-		...(record.publisher ? { publisher: record.publisher } : {}),
-		...(record.institution ? { institution: record.institution } : {}),
-		...(record.rights ? { rights: record.rights } : {}),
 		...(record.license ? { license: record.license.toLowerCase() } : {}),
-		creators: record.creators,
-		tags: record.tags,
 		...(reusedDoi ? { doi: reusedDoi } : {})
 	};
 }

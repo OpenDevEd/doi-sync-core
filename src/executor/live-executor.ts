@@ -43,8 +43,8 @@ import type {
 	ZenodoPreparedDraft,
 	ZenodoPublishJournalOperationType
 } from '../zenodo/journal.js';
+import type { DoiPolicy } from '../zenodo/rdm-payload.js';
 import type {
-	DoiPolicy,
 	ZenodoDoiLookupResult,
 	ZenodoRecordIdentifiers
 } from '../zenodo/records.js';
