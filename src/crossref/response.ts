@@ -50,6 +50,15 @@ export interface CrossrefUnixrefRecord {
   readonly resourceUrl?: string;
   readonly depositTimestamp?: string;
   readonly relations?: readonly CrossrefUnixrefRelation[];
+  readonly funding?: readonly CrossrefUnixrefFunding[];
+  /** The DOIs its citation list holds. */
+  readonly references?: readonly string[];
+}
+
+export interface CrossrefUnixrefFunding {
+  readonly funderName: string;
+  readonly funderIdentifier?: string;
+  readonly awards: readonly string[];
 }
 
 export interface CrossrefUnixrefCreator {
@@ -140,6 +149,8 @@ export function parseCrossrefUnixrefXml(xml: string): CrossrefUnixrefRecord | nu
   const institution = container.institution;
   const creators = parseCreators(metadata);
   const relations = parseRelations(metadata);
+  const funding = parseFunding(metadata);
+  const references = parseReferences(metadata);
 
   return {
     kind: container.kind,
@@ -160,7 +171,9 @@ export function parseCrossrefUnixrefXml(xml: string): CrossrefUnixrefRecord | nu
     ...(creators.length > 0 ? { creators } : {}),
     ...optionalString('resourceUrl', doiData?.['resource']),
     ...optionalString('depositTimestamp', doiRecord?.['@_timestamp']),
-    ...(relations.length > 0 ? { relations } : {})
+    ...(relations.length > 0 ? { relations } : {}),
+    ...(funding.length > 0 ? { funding } : {}),
+    ...(references.length > 0 ? { references } : {})
   };
 }
 
@@ -525,6 +538,32 @@ function parseRelations(metadata: Record<string, unknown>): readonly CrossrefUni
     }
   }
   return relations;
+}
+
+const assertions = (element: Record<string, unknown>) => [...records(element['assertion']), ...records(element['fr:assertion'])];
+const named = (element: Record<string, unknown>, name: string) => assertions(element).filter((assertion) => assertion['@_name'] === name);
+
+function parseFunding(metadata: Record<string, unknown>): readonly CrossrefUnixrefFunding[] {
+  const funding: CrossrefUnixrefFunding[] = [];
+  for (const program of [...records(metadata['program']), ...records(metadata['fr:program'])]) {
+    if (program['@_name'] !== 'fundref') continue;
+    for (const group of named(program, 'fundgroup')) {
+      const funder = named(group, 'funder_name')[0];
+      const funderName = funder ? elementText(funder) : null;
+      if (!funder || !funderName) continue;
+      const funderIdentifier = named(funder, 'funder_identifier').map(elementText).find(Boolean) ?? named(group, 'funder_identifier').map(elementText).find(Boolean);
+      funding.push({
+        funderName,
+        ...(funderIdentifier ? { funderIdentifier } : {}),
+        awards: named(group, 'award_number').flatMap((award) => elementText(award) ?? [])
+      });
+    }
+  }
+  return funding;
+}
+
+function parseReferences(metadata: Record<string, unknown>): readonly string[] {
+  return records(asRecord(metadata['citation_list'])?.['citation']).flatMap((citation) => textValue(citation['doi']) ?? elementText(citation['doi']) ?? []);
 }
 
 function resolveStatus(input: {

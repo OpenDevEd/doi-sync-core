@@ -506,8 +506,10 @@ describe('CrossrefApiClient', () => {
     expect(calls[2]?.init.method).toBe('GET');
   });
 
-  it('matches a series report only once its series, ISSN and every relation read back', async () => {
-    const unixref = (relations: string) => `
+  it('matches a series report only once its series, ISSN, funders, citations and exact relations read back', async () => {
+    const funded = '<program name="fundref"><assertion name="fundgroup"><assertion name="funder_name">National Science Foundation<assertion name="funder_identifier">https://doi.org/10.13039/100000001</assertion></assertion><assertion name="award_number">CHE-1152342</assertion></assertion></program>';
+    const cited = '<citation_list><citation key="ref1"><doi>10.1000/cited.1</doi></citation></citation_list>';
+    const unixref = (relations: string, funding = funded, citations = cited) => `
       <doi_records>
         <doi_record owner="10.53832" timestamp="2026-05-22 11:18:58">
           <crossref>
@@ -518,10 +520,12 @@ describe('CrossrefApiClient', () => {
                 <publication_date media_type="online"><month>05</month><day>20</day><year>2026</year></publication_date>
                 <publisher><publisher_name>Openscholar</publisher_name></publisher>
                 <institution><institution_name>Openscholar Reports</institution_name></institution>
+                ${funding}
                 <doi_data>
                   <doi>10.53832/opendeved.1205</doi>
                   <resource>https://openscholar.ai/papers/R100001</resource>
                 </doi_data>
+                ${citations}
                 <program xmlns="http://www.crossref.org/relations.xsd">${relations}</program>
               </report-paper_series_metadata>
             </report-paper>
@@ -546,6 +550,8 @@ describe('CrossrefApiClient', () => {
         institution: 'Openscholar Reports',
         isbns: [],
         series: { title: 'Openscholar Reports', issns: ['2049-3630'] },
+        funding: [{ funderName: 'National Science Foundation', funderIdentifier: 'https://doi.org/10.13039/100000001', awards: ['CHE-1152342'] }],
+        references: ['10.1000/cited.1'],
         relations: [
           { type: 'isSupplementedBy', identifierType: 'uri', identifier: 'https://github.com/example/code', description: 'Code' },
           { type: 'hasVersion', identifierType: 'doi', identifier: '10.1000/earlier', description: 'Other version' }
@@ -555,6 +561,11 @@ describe('CrossrefApiClient', () => {
 
     await expect(verify(unixref(code + version))).resolves.toMatchObject({ status: 'matched' });
     await expect(verify(unixref(code))).resolves.toMatchObject({ status: 'pending', reason: 'Crossref XML API metadata has not caught up: relation=missing' });
+    // What a correction took off is still held: an old link, an old funder, an old citation.
+    const old = '<related_item><inter_work_relation relationship-type="isSupplementedBy" identifier-type="uri">https://example.org/old</inter_work_relation></related_item>';
+    await expect(verify(unixref(code + version + old))).resolves.toMatchObject({ status: 'pending', reason: 'Crossref XML API metadata has not caught up: relation=missing' });
+    await expect(verify(unixref(code + version, funded.replace('CHE-1152342', 'OLD-1')))).resolves.toMatchObject({ status: 'pending', reason: 'Crossref XML API metadata has not caught up: funding' });
+    await expect(verify(unixref(code + version, funded, cited.replace('</citation_list>', '<citation key="ref2"><doi>10.1000/old</doi></citation></citation_list>')))).resolves.toMatchObject({ status: 'pending', reason: 'Crossref XML API metadata has not caught up: references' });
   });
 
   it('verifies pending test deposits against the Crossref test XML API', async () => {

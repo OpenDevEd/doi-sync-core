@@ -273,16 +273,12 @@ export class CrossrefApiClient {
         expected: input.record
       });
       lastVerification = metadataVerification;
-      if (metadataVerification.status !== 'matched') continue;
-      const relations = input.relation === 'delete-all'
-        ? 'delete-all' as const
-        : [...(input.record.relations ?? []), ...(input.relation ? [input.relation] : [])];
-      if (relations !== 'delete-all' && relations.length === 0) return metadataVerification;
-      if (!metadataVerification.record) continue;
+      if (metadataVerification.status !== 'matched' || !metadataVerification.record) continue;
 
-      lastVerification = verifyXmlApiRelations({
+      lastVerification = verifyXmlApiDetails({
         record: metadataVerification.record,
-        relations
+        expected: input.record,
+        ...(input.relation ? { relation: input.relation } : {})
       });
       if (lastVerification.status === 'matched') return lastVerification;
     }
@@ -554,30 +550,40 @@ function expectedContainerTitle(record: CrossrefMappedRecord): string | undefine
   }
 }
 
-function verifyXmlApiRelations(input: {
+/**
+ * The sections a record gives are held as given: its funders, the DOIs it cites, and its relations with the
+ * deposit's own. A section given empty is held as none. Without relations of its own, the deposit's relation only has
+ * to be there, and 'delete-all' wants none left.
+ */
+function verifyXmlApiDetails(input: {
   readonly record: CrossrefUnixrefRecord;
-  readonly relations: readonly CrossrefRelation[] | 'delete-all';
+  readonly expected: CrossrefMappedRecord;
+  readonly relation?: CrossrefDepositRelation;
 }): CrossrefXmlApiVerification {
-  if (input.relations === 'delete-all') {
-    return (input.record.relations?.length ?? 0) === 0
-      ? { status: 'matched', record: input.record }
-      : {
-          status: 'pending', record: input.record,
-          reason: 'Crossref XML API metadata has not caught up: relations=not-cleared'
-        };
-  }
-  if (input.relations.every((relation) => hasExpectedRelation(input.record.relations ?? [], relation))) {
-    return {
-      status: 'matched',
-      record: input.record
-    };
-  }
+  const { record, expected, relation } = input;
+  const held = record.relations ?? [];
+  const wanted = relation === 'delete-all' ? [] : [...(expected.relations ?? []), ...(relation ? [relation] : [])];
+  const relationsHeld = relation === 'delete-all' || expected.relations
+    ? sameStringArray(normalizeStringArray(held.map(relationSignature)), normalizeStringArray(wanted.map(relationSignature)))
+    : wanted.every((item) => hasExpectedRelation(held, item));
+  const mismatches = [
+    relationsHeld ? null : relation === 'delete-all' ? 'relations=not-cleared' : 'relation=missing',
+    expected.funding && !sameStringArray(normalizeStringArray((record.funding ?? []).map(fundingSignature)), normalizeStringArray(expected.funding.map(fundingSignature))) ? 'funding' : null,
+    expected.references && !sameStringArray(normalizeStringArray((record.references ?? []).map((doi) => normalizeDoi(doi) ?? doi)), normalizeStringArray(expected.references.map((doi) => normalizeDoi(doi) ?? doi))) ? 'references' : null
+  ].filter((entry): entry is string => Boolean(entry));
+  return mismatches.length === 0
+    ? { status: 'matched', record }
+    : { status: 'pending', record, reason: `Crossref XML API metadata has not caught up: ${mismatches.join(', ')}` };
+}
 
-  return {
-    status: 'pending',
-    record: input.record,
-    reason: 'Crossref XML API metadata has not caught up: relation=missing'
-  };
+function relationSignature(relation: { readonly type?: string; readonly identifierType?: string; readonly identifier?: string; readonly description?: string | undefined }): string {
+  const identifierType = relation.identifierType?.toLowerCase();
+  const identifier = identifierType === 'doi' ? normalizeDoi(relation.identifier) : normalizeText(relation.identifier);
+  return [relation.type, identifierType, identifier, normalizeText(relation.description)].join('|');
+}
+
+function fundingSignature(funding: { readonly funderName: string; readonly funderIdentifier?: string | undefined; readonly awards: readonly string[] }): string {
+  return [normalizeText(funding.funderName), normalizeUrl(funding.funderIdentifier), ...normalizeStringArray(funding.awards)].join('|');
 }
 
 function hasExpectedRelation(
