@@ -34,6 +34,11 @@ interface CrossrefMappedRecordBase {
   /** Where the publisher is, as the record's `place` gives it. */
   readonly publisherPlace?: string;
   readonly fullTextUrl?: string;
+  /**
+   * The work was withdrawn: its full text is no longer to be read. Crossref keeps full-text links an earlier deposit
+   * gave until a deposit sends their collections empty, which this one does, and it no longer says free to read.
+   */
+  readonly withdrawn?: true;
 }
 
 /** The series a report is one of, deposited as `report-paper_series_metadata` once it has an ISSN. */
@@ -173,8 +178,9 @@ function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefReco
     ...(record.references ? { references: record.references.map((reference) => normalizeDoi(reference) ?? reference) } : {}),
     ...(record.relations ? { relations: record.relations } : {}),
     ...(licenseUrlOf(record.license) ? { licenseUrl: licenseUrlOf(record.license)! } : {}),
-    ...(isOpenLicense(record.license) ? { freeToRead: true as const } : {}),
-    ...(record.fullTextUrl ? { fullTextUrl: record.fullTextUrl } : {}),
+    ...(isOpenLicense(record.license) && !record.withdrawnOn ? { freeToRead: true as const } : {}),
+    ...(record.fullTextUrl && !record.withdrawnOn ? { fullTextUrl: record.fullTextUrl } : {}),
+    ...(record.withdrawnOn ? { withdrawn: true as const } : {}),
     ...optionalField('publisherPlace', record.fields['place'])
   };
   const organization = record.publisher ?? record.institution;
