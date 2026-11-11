@@ -117,6 +117,15 @@ describe('Crossref 5.5 publication XML', () => {
 		expect(untouched).not.toMatch(/fr:program|rel:program|citation_list/);
 	});
 
+	it('takes back the full-text links and free to read once the work is withdrawn, keeping the licence', () => {
+		const xml = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', { ...WORK_DETAILS, withdrawnOn: '2026-11-11' })));
+
+		expect(xml).toContain('<collection property="text-mining"/><collection property="crawler-based"/>');
+		expect(xml).not.toContain('R100001/pdf');
+		expect(xml).not.toContain('ai:free_to_read');
+		expect(xml).toContain('<ai:license_ref applies_to="vor">https://creativecommons.org/licenses/by/4.0/legalcode</ai:license_ref>');
+	});
+
 	it('deposits the subtitle, roles, affiliations by ROR and country, the funder\'s ROR, the licence and the full text', () => {
 		const xml = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', WORK_DETAILS)));
 
