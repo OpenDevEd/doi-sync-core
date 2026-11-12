@@ -68,6 +68,12 @@ export interface PublicationFunding {
   readonly awards: readonly string[];
 }
 
+/** A licence of the author's own, which no vocabulary names: its name and the address of its text. */
+export interface PublicationCustomLicense {
+  readonly title: string;
+  readonly url: string;
+}
+
 export interface PublicationMetadata {
   readonly itemType: string;
   readonly title: string;
@@ -78,7 +84,12 @@ export interface PublicationMetadata {
   readonly publisher?: string | undefined;
   readonly institution?: string | undefined;
   readonly rights?: string | undefined;
+  /** A licence in Zenodo's vocabulary, by its ID (`cc-by-4.0`). */
   readonly license?: string | undefined;
+  /** A licence outside Zenodo's vocabulary, given instead of `license`. */
+  readonly customLicense?: PublicationCustomLicense | undefined;
+  /** Anyone may read the work without paying, whatever its licence says. Left out, an open licence says so (`isOpenLicense`). */
+  readonly freeToRead?: boolean | undefined;
   readonly creators: readonly PublicationCreator[];
   readonly tags: readonly string[];
   readonly funding?: readonly PublicationFunding[] | undefined;
@@ -179,6 +190,8 @@ const publicationMetadataShape = {
   institution: nonEmptyString.optional(),
   rights: nonEmptyString.optional(),
   license: nonEmptyString.optional(),
+  customLicense: z.object({ title: nonEmptyString, url: httpUrl }).strict().optional(),
+  freeToRead: z.boolean().optional(),
   creators: z.array(publicationCreatorSchema),
   tags: z.array(nonEmptyString),
   funding: z.array(publicationFundingSchema).optional(),

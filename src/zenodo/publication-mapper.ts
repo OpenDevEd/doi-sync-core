@@ -61,6 +61,12 @@ export function validateZenodoPublicationRecord(
 			message: `Zenodo license ${record.license} is not in the supported license vocabulary`
 		});
 	}
+	if (record.license && record.customLicense) {
+		issues.push({
+			code: 'INVALID_FIELD_VALUE', path: 'customLicense',
+			message: 'A record has one licence: a Zenodo license ID or a custom licence, not both'
+		});
+	}
 	return issues;
 }
 

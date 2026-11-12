@@ -170,6 +170,7 @@ function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefReco
     creators: mapCreators(record.creators),
     doi
   };
+  const licenseUrl = licenseUrlOf(record.license) ?? record.customLicense?.url;
   // A list given empty is kept: the deposit then clears that section. One left out leaves the deposit as it was.
   const base = {
     metadata,
@@ -177,8 +178,8 @@ function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefReco
     ...(record.funding ? { funding: record.funding } : {}),
     ...(record.references ? { references: record.references.map((reference) => normalizeDoi(reference) ?? reference) } : {}),
     ...(record.relations ? { relations: record.relations } : {}),
-    ...(licenseUrlOf(record.license) ? { licenseUrl: licenseUrlOf(record.license)! } : {}),
-    ...(isOpenLicense(record.license) && !record.withdrawnOn ? { freeToRead: true as const } : {}),
+    ...(licenseUrl ? { licenseUrl } : {}),
+    ...((record.freeToRead ?? isOpenLicense(record.license)) && !record.withdrawnOn ? { freeToRead: true as const } : {}),
     ...(record.fullTextUrl && !record.withdrawnOn ? { fullTextUrl: record.fullTextUrl } : {}),
     ...(record.withdrawnOn ? { withdrawn: true as const } : {}),
     ...optionalField('publisherPlace', record.fields['place'])
