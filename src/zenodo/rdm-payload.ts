@@ -58,7 +58,15 @@ const CONTRIBUTOR_ROLES: Readonly<Record<string, string>> = {
   reviewedAuthor: 'relatedperson',
   commenter: 'other',
   sponsor: 'sponsor',
-  producer: 'producer'
+  producer: 'producer',
+  // Crossref's roles for a person that Zenodo has no word of its own for.
+  chair: 'other',
+  reviewer: 'other',
+  'review-assistant': 'other',
+  'reviewer-external': 'other',
+  'stats-reviewer': 'other',
+  reader: 'other',
+  other: 'other'
 };
 
 /** Our relation types as DataCite's, which Zenodo keeps. Data, code and supplements all supplement the work. */
@@ -209,9 +217,9 @@ export function resourceTypeId(resourceType: ZenodoResourceType, itemType?: stri
 function splitCreators(creators: readonly PublicationCreator[]) {
   const roleOf = (creator: PublicationCreator) => (creator.creatorType ? CONTRIBUTOR_ROLES[creator.creatorType] : undefined);
   const authors = creators.filter((creator) => !roleOf(creator));
-  if (authors.length === 0) return { creators, contributors: [] };
+  // Zenodo needs a creator: with nobody but editors and the like, they are its creators and keep their roles as contributors.
   return {
-    creators: authors,
+    creators: authors.length ? authors : creators,
     contributors: creators.flatMap((creator) => {
       const role = roleOf(creator);
       return role ? [{ creator, role }] : [];

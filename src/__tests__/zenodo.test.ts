@@ -42,6 +42,8 @@ describe('Zenodo records', () => {
 						affiliations: [{ name: 'CERN', ror: '01ggx4157', country: 'CH' }, { name: 'Unknown institute', ror: '0abcdef12' }]
 					},
 					{ type: 'personal', name: 'Okafor, Ada', givenName: 'Ada', familyName: 'Okafor', creatorType: 'editor' },
+					// A role Crossref has and Zenodo doesn't, such as a panel's chair, is Zenodo's "other".
+					{ type: 'personal', name: 'Mensah, Kofi', givenName: 'Kofi', familyName: 'Mensah', creatorType: 'chair' },
 					{ type: 'organizational', name: 'World Health Organization', ror: '01f80g185' }
 				],
 				subjects: ['Climate change impacts on agriculture', 'SDG 2: Zero hunger'],
@@ -80,6 +82,7 @@ describe('Zenodo records', () => {
 			],
 			contributors: [
 				{ person_or_org: { type: 'personal', given_name: 'Ada', family_name: 'Okafor' }, role: { id: 'editor' } },
+				{ person_or_org: { type: 'personal', given_name: 'Kofi', family_name: 'Mensah' }, role: { id: 'other' } },
 				{ person_or_org: { type: 'organizational', name: 'Open Development & Education' }, role: { id: 'hostinginstitution' } }
 			],
 			additional_descriptions: [
@@ -116,6 +119,17 @@ describe('Zenodo records', () => {
 		const unlicensed = { ...metadata, license: undefined };
 		expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...unlicensed, customLicense } }).metadata).toMatchObject({ rights: [{ title: { en: 'Evidence Licence 1.0' }, link: 'https://example.org/licence' }] });
 		expect(() => buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, customLicense } })).toThrow('not both');
+	});
+
+	it('lists an edited volume\'s editors as its creators and keeps their role', () => {
+		const payload = buildZenodoRecordPayload({
+			doiPolicy: 'external-crossref',
+			resourceUrl: 'https://openscholar.ai/papers/R100002',
+			metadata: { ...metadata, creators: [{ type: 'personal', name: 'Okafor, Ada', givenName: 'Ada', familyName: 'Okafor', creatorType: 'editor' }] }
+		});
+		const ada = { type: 'personal', given_name: 'Ada', family_name: 'Okafor' };
+		expect(payload.metadata).toMatchObject({ creators: [{ person_or_org: ada }] });
+		expect(payload.metadata['contributors']).toContainEqual({ person_or_org: ada, role: { id: 'editor' } });
 	});
 
 	it('leaves the DOI to Zenodo when it mints one', () => {

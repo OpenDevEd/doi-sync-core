@@ -9,6 +9,7 @@ import type {
 	PublicationRelationType
 } from '../publication/record.js';
 import { crossrefContributorRole } from './contributors.js';
+import { normalizeDoi } from '../doi.js';
 import type { CrossrefMappedRecord, CrossrefPages, CrossrefSeries } from './record-mapper.js';
 
 export type CrossrefRelationType = PublicationRelationType;
@@ -529,10 +530,19 @@ function appendRelations(
 	}
 }
 
+/**
+ * Each reference by its DOI, or, for one without, as its reference list writes it: Crossref matches an unstructured
+ * citation to a DOI itself where it can.
+ */
 function appendCitations(parent: XMLBuilder, references: readonly string[] | undefined): void {
 	if (!references) return;
 	const list = parent.ele('citation_list');
-	references.forEach((doi, index) => appendTextElement(list.ele('citation', { key: `ref${index + 1}` }), 'doi', doi));
+	references.forEach((reference, index) => {
+		const citation = list.ele('citation', { key: `ref${index + 1}` });
+		const doi = normalizeDoi(reference);
+		if (doi) appendTextElement(citation, 'doi', doi);
+		else appendTextElement(citation, 'unstructured_citation', reference.trim());
+	});
 }
 
 function splitDate(date: string): { readonly year: string; readonly month?: string; readonly day?: string } {

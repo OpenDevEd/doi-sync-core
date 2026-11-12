@@ -1,6 +1,7 @@
 const CROSSREF_CONTRIBUTOR_ROLES = new Set([
   'author',
   'chair',
+  'other',
   'editor',
   'reader',
   'review-assistant',
