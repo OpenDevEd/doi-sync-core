@@ -214,9 +214,9 @@ export function resourceTypeId(resourceType: ZenodoResourceType, itemType?: stri
 function splitCreators(creators: readonly PublicationCreator[]) {
   const roleOf = (creator: PublicationCreator) => (creator.creatorType ? CONTRIBUTOR_ROLES[creator.creatorType] : undefined);
   const authors = creators.filter((creator) => !roleOf(creator));
-  if (authors.length === 0) return { creators, contributors: [] };
+  // Zenodo needs a creator: with nobody but editors and the like, they are its creators and keep their roles as contributors.
   return {
-    creators: authors,
+    creators: authors.length ? authors : creators,
     contributors: creators.flatMap((creator) => {
       const role = roleOf(creator);
       return role ? [{ creator, role }] : [];
