@@ -561,9 +561,14 @@ function parseFunding(metadata: Record<string, unknown>): readonly CrossrefUnixr
 }
 
 function parseReferences(metadata: Record<string, unknown>): readonly string[] {
-  return records(asRecord(metadata['citation_list'])?.['citation']).flatMap(
-    (citation) => textValue(citation['doi']) ?? elementText(citation['doi']) ?? textValue(citation['unstructured_citation']) ?? elementText(citation['unstructured_citation']) ?? []
-  );
+  return records(asRecord(metadata['citation_list'])?.['citation']).flatMap((citation) => {
+    const doi = textValue(citation['doi']) ?? elementText(citation['doi']);
+    const written = textValue(citation['unstructured_citation']) ?? elementText(citation['unstructured_citation']);
+    // Crossref matches a reference deposited as written to a DOI of its own finding and keeps it beside the text, marked
+    // provider="crossref": the reference reads back as it was deposited, or a record with one would never match.
+    const matched = textValue(asRecord(citation['doi'])?.['@_provider'])?.toLowerCase() === 'crossref';
+    return (matched ? written : null) ?? doi ?? written ?? [];
+  });
 }
 
 function resolveStatus(input: {
