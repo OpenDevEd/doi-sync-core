@@ -366,8 +366,8 @@ function validateCommonFields(record: CrossrefRecordInput, doi?: string): readon
     });
   }
   (record.references ?? []).forEach((reference, index) => {
-    if (!normalizeDoi(reference)) {
-      issues.push({ code: 'INVALID_FIELD_VALUE', path: `references.${index}`, message: 'Crossref references must be DOIs' });
+    if (!reference.trim()) {
+      issues.push({ code: 'INVALID_FIELD_VALUE', path: `references.${index}`, message: 'Crossref references must be a DOI or the citation as written' });
     }
   });
   (record.relations ?? []).forEach((relation, index) => {

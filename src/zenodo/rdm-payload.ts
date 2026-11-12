@@ -58,7 +58,15 @@ const CONTRIBUTOR_ROLES: Readonly<Record<string, string>> = {
   reviewedAuthor: 'relatedperson',
   commenter: 'other',
   sponsor: 'sponsor',
-  producer: 'producer'
+  producer: 'producer',
+  // Crossref's roles for a person that Zenodo has no word of its own for.
+  chair: 'other',
+  reviewer: 'other',
+  'review-assistant': 'other',
+  'reviewer-external': 'other',
+  'stats-reviewer': 'other',
+  reader: 'other',
+  other: 'other'
 };
 
 /** Our relation types as DataCite's, which Zenodo keeps. Data, code and supplements all supplement the work. */

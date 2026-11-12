@@ -561,7 +561,9 @@ function parseFunding(metadata: Record<string, unknown>): readonly CrossrefUnixr
 }
 
 function parseReferences(metadata: Record<string, unknown>): readonly string[] {
-  return records(asRecord(metadata['citation_list'])?.['citation']).flatMap((citation) => textValue(citation['doi']) ?? elementText(citation['doi']) ?? []);
+  return records(asRecord(metadata['citation_list'])?.['citation']).flatMap(
+    (citation) => textValue(citation['doi']) ?? elementText(citation['doi']) ?? textValue(citation['unstructured_citation']) ?? elementText(citation['unstructured_citation']) ?? []
+  );
 }
 
 function resolveStatus(input: {
