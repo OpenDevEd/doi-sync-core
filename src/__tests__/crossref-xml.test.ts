@@ -99,11 +99,20 @@ describe('Crossref 5.5 publication XML', () => {
 		expect(xml).toContain('<ORCID>https://orcid.org/0000-0002-1825-0097</ORCID>');
 	});
 
+	it('names each person by their Crossref role, translators, chairs and others included', () => {
+		const people = [['translator', 'Okafor, Ada'], ['chair', 'Mensah, Kofi'], ['other', 'Banda, Chikondi']] as const;
+		const xml = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', {
+			creators: people.map(([creatorType, name]) => ({ type: 'personal' as const, name, familyName: name.split(',')[0]!, creatorType }))
+		})));
+		for (const [role] of people) expect(xml).toContain(`contributor_role="${role}"`);
+	});
+
 	it('deposits a work\'s funders, cited DOIs and relations beside the archive link', () => {
 		const xml = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', WORK_DETAILS), ARCHIVE_RELATION));
 
 		expect(xml).toContain('<fr:assertion name="funder_name">National Science Foundation<fr:assertion name="funder_identifier">https://doi.org/10.13039/100000001</fr:assertion><fr:assertion name="ror">https://ror.org/021nxhr62</fr:assertion></fr:assertion><fr:assertion name="award_number">CHE-1152342</fr:assertion><fr:assertion name="award_number">CBET-106</fr:assertion>');
-		expect(xml).toContain('<citation key="ref1"><doi>10.1000/cited.1</doi></citation><citation key="ref2"><doi>10.1000/cited.2</doi></citation>');
+		// A reference without a DOI goes as its reference list writes it.
+		expect(xml).toContain('<citation key="ref1"><doi>10.1000/cited.1</doi></citation><citation key="ref2"><doi>10.1000/cited.2</doi></citation><citation key="ref3"><unstructured_citation>Banerjee, A., &amp; Duflo, E. (2011). Poor Economics. PublicAffairs.</unstructured_citation></citation>');
 		expect(xml.match(/<rel:related_item>/g)).toHaveLength(3);
 	});
 
@@ -175,7 +184,7 @@ const WORK_DETAILS = {
 		{ funderName: 'National Science Foundation', funderIdentifier: 'https://doi.org/10.13039/100000001', funderRor: '021nxhr62', awards: ['CHE-1152342', 'CBET-106'] },
 		{ funderName: 'A funder with no identifier', awards: [] }
 	],
-	references: ['https://doi.org/10.1000/Cited.1', '10.1000/cited.2'],
+	references: ['https://doi.org/10.1000/Cited.1', '10.1000/cited.2', 'Banerjee, A., & Duflo, E. (2011). Poor Economics. PublicAffairs.'],
 	relations: [
 		{ type: 'isSupplementedBy', identifierType: 'uri', identifier: 'https://github.com/example/code', description: 'Code' },
 		{ type: 'hasVersion', identifierType: 'doi', identifier: '10.1000/earlier', description: 'Other version' }
