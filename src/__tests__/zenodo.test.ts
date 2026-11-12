@@ -114,6 +114,17 @@ describe('Zenodo records', () => {
 		expect(payload.custom_fields).toEqual({ 'imprint:imprint': { title: 'Openscholar Reports', place: 'Nairobi, Kenya' } });
 	});
 
+	it('lists an edited volume\'s editors as its creators and keeps their role', () => {
+		const payload = buildZenodoRecordPayload({
+			doiPolicy: 'external-crossref',
+			resourceUrl: 'https://openscholar.ai/papers/R100002',
+			metadata: { ...metadata, creators: [{ type: 'personal', name: 'Okafor, Ada', givenName: 'Ada', familyName: 'Okafor', creatorType: 'editor' }] }
+		});
+		const ada = { type: 'personal', given_name: 'Ada', family_name: 'Okafor' };
+		expect(payload.metadata).toMatchObject({ creators: [{ person_or_org: ada }] });
+		expect(payload.metadata['contributors']).toContainEqual({ person_or_org: ada, role: { id: 'editor' } });
+	});
+
 	it('leaves the DOI to Zenodo when it mints one', () => {
 		expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata })).not.toHaveProperty('pids');
 		const withoutDoi = Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== 'doi')) as Omit<typeof metadata, 'doi'>;
