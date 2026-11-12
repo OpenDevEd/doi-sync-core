@@ -102,7 +102,7 @@ describe('Crossref 5.5 publication XML', () => {
 	it('deposits a work\'s funders, cited DOIs and relations beside the archive link', () => {
 		const xml = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', WORK_DETAILS), ARCHIVE_RELATION));
 
-		expect(xml).toContain('<fr:assertion name="funder_name">National Science Foundation<fr:assertion name="funder_identifier">https://doi.org/10.13039/100000001</fr:assertion></fr:assertion><fr:assertion name="ror">https://ror.org/021nxhr62</fr:assertion><fr:assertion name="award_number">CHE-1152342</fr:assertion><fr:assertion name="award_number">CBET-106</fr:assertion>');
+		expect(xml).toContain('<fr:assertion name="funder_name">National Science Foundation<fr:assertion name="funder_identifier">https://doi.org/10.13039/100000001</fr:assertion><fr:assertion name="ror">https://ror.org/021nxhr62</fr:assertion></fr:assertion><fr:assertion name="award_number">CHE-1152342</fr:assertion><fr:assertion name="award_number">CBET-106</fr:assertion>');
 		expect(xml).toContain('<citation key="ref1"><doi>10.1000/cited.1</doi></citation><citation key="ref2"><doi>10.1000/cited.2</doi></citation>');
 		expect(xml.match(/<rel:related_item>/g)).toHaveLength(3);
 	});
