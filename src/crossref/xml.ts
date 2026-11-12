@@ -489,11 +489,13 @@ function appendFunding(parent: XMLBuilder, funding: readonly PublicationFunding[
 	const program = parent.ele('fr:program', { name: 'fundref' });
 	for (const funder of funding) {
 		const group = program.ele('fr:assertion', { name: 'fundgroup' });
+		// A funder's identifiers sit inside its name: beside it, Crossref files the ROR ID as a second funder.
+		// https://www.crossref.org/documentation/schema-library/markup-guide-metadata-segments/funding-information/#nesting-of-names
 		const name = group.ele('fr:assertion', { name: 'funder_name' }).txt(sanitizeXmlText(funder.funderName));
 		if (funder.funderIdentifier) {
 			name.ele('fr:assertion', { name: 'funder_identifier' }).txt(sanitizeXmlText(funder.funderIdentifier));
 		}
-		if (funder.funderRor) group.ele('fr:assertion', { name: 'ror' }).txt(`https://ror.org/${funder.funderRor}`);
+		if (funder.funderRor) name.ele('fr:assertion', { name: 'ror' }).txt(`https://ror.org/${funder.funderRor}`);
 		funder.awards.forEach((award) => group.ele('fr:assertion', { name: 'award_number' }).txt(sanitizeXmlText(award)));
 	}
 }
