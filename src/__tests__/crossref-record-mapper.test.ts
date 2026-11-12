@@ -112,6 +112,13 @@ describe('Crossref record mapper', () => {
 			}
 		});
 	});
+
+	it('deposits a custom licence by its address, free to read only when the record says so', () => {
+		const customLicense = { title: 'Evidence Licence 1.0', url: 'https://example.org/licence' };
+		expect(mapCrossrefRecord(record({ customLicense, freeToRead: true }), '10.53832/opendeved.1')).toMatchObject({ ok: true, record: { licenseUrl: 'https://example.org/licence', freeToRead: true } });
+		const unsaid = mapCrossrefRecord(record({ customLicense }), '10.53832/opendeved.1');
+		expect(unsaid.ok && unsaid.record).not.toHaveProperty('freeToRead');
+	});
 });
 
 function record(overrides: Partial<PublicationRecordSnapshot>): PublicationRecordSnapshot {

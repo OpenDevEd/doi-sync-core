@@ -111,6 +111,13 @@ describe('Zenodo records', () => {
 		expect(payload.custom_fields).toEqual({ 'imprint:imprint': { title: 'Openscholar Reports', place: 'Nairobi, Kenya' } });
 	});
 
+	it('writes a custom licence by title and link, and refuses a record with two licences', () => {
+		const customLicense = { title: 'Evidence Licence 1.0', url: 'https://example.org/licence' };
+		const unlicensed = { ...metadata, license: undefined };
+		expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...unlicensed, customLicense } }).metadata).toMatchObject({ rights: [{ title: { en: 'Evidence Licence 1.0' }, link: 'https://example.org/licence' }] });
+		expect(() => buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, customLicense } })).toThrow('not both');
+	});
+
 	it('leaves the DOI to Zenodo when it mints one', () => {
 		expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata })).not.toHaveProperty('pids');
 		const withoutDoi = Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== 'doi')) as Omit<typeof metadata, 'doi'>;

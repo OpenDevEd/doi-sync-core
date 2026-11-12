@@ -122,7 +122,10 @@ export function buildZenodoRecordPayload(input: ZenodoRecordPayloadInput): Zenod
       ...(seriesTitle ? [{ description: [seriesTitle, issn ? `ISSN ${issn}` : undefined, field('seriesNumber')].filter(Boolean).join(', '), type: { id: 'series-information' } }] : []),
       ...(metadata.rights ? [{ description: metadata.rights, type: { id: 'other' } }] : [])
     ]),
-    rights: license && ZENODO_LICENSE_IDS.has(license) ? [{ id: license }] : undefined,
+    // InvenioRDM takes a licence outside its vocabulary by title and link, never with an id.
+    rights: license && ZENODO_LICENSE_IDS.has(license)
+      ? [{ id: license }]
+      : metadata.customLicense ? [{ title: { en: metadata.customLicense.title }, link: metadata.customLicense.url }] : undefined,
     copyright: metadata.copyright,
     contributors: nonEmpty(contributors),
     subjects: nonEmpty(subjects.map((subject) => ({ subject }))),
