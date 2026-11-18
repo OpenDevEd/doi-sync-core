@@ -1,6 +1,6 @@
 # @opendeved/doi-sync-core
 
-Provider-neutral Crossref and Zenodo publication planning, execution, and settlement for OpenDevEd services.
+Provider-neutral Crossref and Zenodo publication planning, execution, and settlement, shared by [Openscholar](https://github.com/Openscholar-ai/openscholar) and [Evidence Community](https://github.com/Openscholar-ai/evidence-community).
 
 ## Boundary
 
@@ -44,3 +44,7 @@ Zenodo license validation uses a generated snapshot of the official Zenodo licen
 ```bash
 npm run zenodo:licenses:generate
 ```
+
+## Licence
+
+Free software under the [GNU Affero General Public License v3.0](LICENSE).

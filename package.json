@@ -1,7 +1,8 @@
 {
   "name": "@opendeved/doi-sync-core",
   "version": "0.1.0",
-  "description": "Provider-neutral Crossref and Zenodo publication sync logic shared by OpenDevEd services.",
+  "description": "Provider-neutral Crossref and Zenodo publication sync logic shared by Openscholar services.",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
