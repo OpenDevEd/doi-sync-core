@@ -117,7 +117,7 @@ function appendJournalArticle(
 	appendFunding(article, record.funding);
 	appendAccess(article, record);
 	appendRelations(article, record, relation);
-	appendDoiData(article, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn);
+	appendDoiData(article, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn ?? record.fullTextClosed);
 	appendCitations(article, record.references);
 }
 
@@ -140,7 +140,7 @@ function appendBook(
 	appendFunding(metadata, record.funding);
 	appendAccess(metadata, record);
 	appendRelations(metadata, record, relation);
-	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn);
+	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn ?? record.fullTextClosed);
 	appendCitations(metadata, record.references);
 }
 
@@ -171,7 +171,7 @@ function appendBookComponent(
 	appendFunding(item, record.funding);
 	appendAccess(item, record);
 	appendRelations(item, record, relation);
-	appendDoiData(item, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn);
+	appendDoiData(item, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn ?? record.fullTextClosed);
 	appendCitations(item, record.references);
 }
 
@@ -201,7 +201,7 @@ function appendConferencePaper(
 	appendFunding(paper, record.funding);
 	appendAccess(paper, record);
 	appendRelations(paper, record, relation);
-	appendDoiData(paper, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn);
+	appendDoiData(paper, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn ?? record.fullTextClosed);
 	appendCitations(paper, record.references);
 }
 
@@ -221,7 +221,7 @@ function appendDissertation(
 	appendFunding(dissertation, record.funding);
 	appendAccess(dissertation, record);
 	appendRelations(dissertation, record, relation);
-	appendDoiData(dissertation, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn);
+	appendDoiData(dissertation, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn ?? record.fullTextClosed);
 	appendCitations(dissertation, record.references);
 }
 
@@ -250,7 +250,7 @@ function appendReport(
 	appendFunding(metadata, record.funding);
 	appendAccess(metadata, record);
 	appendRelations(metadata, record, relation);
-	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn);
+	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn ?? record.fullTextClosed);
 	appendCitations(metadata, record.references);
 }
 
@@ -279,7 +279,7 @@ function appendSeriesReport(
 	appendPublisherItem(metadata, record.itemNumber);
 	appendFunding(metadata, record.funding);
 	appendAccess(metadata, record);
-	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn);
+	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn ?? record.fullTextClosed);
 	appendCitations(metadata, record.references);
 	appendRelations(metadata, record, relation);
 }
@@ -307,7 +307,7 @@ function appendStandard(
 	appendFunding(metadata, record.funding);
 	appendAccess(metadata, record);
 	appendRelations(metadata, record, relation);
-	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn);
+	appendDoiData(metadata, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn ?? record.fullTextClosed);
 	appendCitations(metadata, record.references);
 }
 
@@ -332,7 +332,7 @@ function appendDataset(
 	appendAccess(dataset, record);
 	appendRelations(dataset, record, relation);
 	appendVersionInfo(dataset, record.version);
-	appendDoiData(dataset, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn);
+	appendDoiData(dataset, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn ?? record.fullTextClosed);
 	appendCitations(dataset, record.references);
 }
 
@@ -355,7 +355,7 @@ function appendPostedContent(
 	appendFunding(posted, record.funding);
 	appendAccess(posted, record);
 	appendRelations(posted, record, relation);
-	appendDoiData(posted, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn);
+	appendDoiData(posted, record.metadata.doi, record.landingUrl, record.fullTextUrl, record.withdrawn ?? record.fullTextClosed);
 	appendCitations(posted, record.references);
 }
 
@@ -417,13 +417,13 @@ function appendVersionInfo(parent: XMLBuilder, version: string | undefined): voi
 }
 
 /** The DOI and its landing page, and with a full text, where machines read it: text mining and Similarity Check. */
-function appendDoiData(parent: XMLBuilder, doi: string, resourceUrl: string, fullTextUrl?: string, withdrawn?: true): void {
+function appendDoiData(parent: XMLBuilder, doi: string, resourceUrl: string, fullTextUrl?: string, closed?: true): void {
 	const doiData = parent.ele('doi_data');
 	appendTextElement(doiData, 'doi', doi);
 	appendTextElement(doiData, 'resource', normalizeResourceUrl(resourceUrl));
 	// Crossref keeps full-text links an earlier deposit gave until a deposit sends their collections empty
 	// (crossref.org/documentation/register-maintain-records/maintaining-your-metadata/metadata-removal-markup-guide).
-	if (withdrawn) {
+	if (closed) {
 		doiData.ele('collection', { property: 'text-mining' });
 		doiData.ele('collection', { property: 'crawler-based' });
 		return;
@@ -435,10 +435,10 @@ function appendDoiData(parent: XMLBuilder, doi: string, resourceUrl: string, ful
 }
 
 /** The licence the work is under, for the version of record and for text mining, and whether anyone may read it. */
-function appendAccess(parent: XMLBuilder, record: Pick<CrossrefMappedRecord, 'licenseUrl' | 'freeToRead'>): void {
+function appendAccess(parent: XMLBuilder, record: Pick<CrossrefMappedRecord, 'licenseUrl' | 'freeToRead' | 'freeToReadFrom'>): void {
 	if (!record.licenseUrl && !record.freeToRead) return;
 	const program = parent.ele('ai:program', { name: 'AccessIndicators' });
-	if (record.freeToRead) program.ele('ai:free_to_read');
+	if (record.freeToRead) program.ele('ai:free_to_read', record.freeToReadFrom ? { start_date: record.freeToReadFrom } : {});
 	if (!record.licenseUrl) return;
 	for (const appliesTo of ['vor', 'tdm']) appendTextElement(program, 'ai:license_ref', record.licenseUrl).att('applies_to', appliesTo);
 }

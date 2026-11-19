@@ -31,6 +31,8 @@ interface CrossrefMappedRecordBase {
   /** The licence's address, and whether it lets anyone read the work. */
   readonly licenseUrl?: string;
   readonly freeToRead?: true;
+  /** The day anyone may read it from, when its files are embargoed until then (YYYY-MM-DD). */
+  readonly freeToReadFrom?: string;
   /** Where the publisher is, as the record's `place` gives it. */
   readonly publisherPlace?: string;
   readonly fullTextUrl?: string;
@@ -39,6 +41,8 @@ interface CrossrefMappedRecordBase {
    * gave until a deposit sends their collections empty, which this one does, and it no longer says free to read.
    */
   readonly withdrawn?: true;
+  /** Its files are private, or not yet open: like a withdrawal, the deposit sends its full-text collections empty. */
+  readonly fullTextClosed?: true;
 }
 
 /** The series a report is one of, deposited as `report-paper_series_metadata` once it has an ISSN. */
@@ -144,6 +148,16 @@ export type CrossrefRecordMappingResult =
   | { readonly ok: true; readonly record: CrossrefMappedRecord }
   | { readonly ok: false; readonly issues: readonly CrossrefRecordValidationIssue[] };
 
+/**
+ * Whether anyone may read the work, as Crossref is told: under an open licence or when the record says so, and not
+ * withdrawn. Files kept private say no; files embargoed say yes from the day they open.
+ */
+function readAccess(record: CrossrefRecordInput): { freeToRead?: true; freeToReadFrom?: string } {
+  if (!(record.freeToRead ?? isOpenLicense(record.license)) || record.withdrawnOn) return {};
+  if (!record.fileAccess) return { freeToRead: true };
+  return record.fileAccess.until ? { freeToRead: true, freeToReadFrom: record.fileAccess.until } : {};
+}
+
 export function mapCrossrefRecord(record: CrossrefRecordInput, doi: string): CrossrefRecordMappingResult {
   return inspectCrossrefRecord(record, doi);
 }
@@ -179,8 +193,9 @@ function mapCrossrefItem(record: CrossrefRecordInput, doi: string): CrossrefReco
     ...(record.references ? { references: record.references.map((reference) => normalizeDoi(reference) ?? reference) } : {}),
     ...(record.relations ? { relations: record.relations } : {}),
     ...(licenseUrl ? { licenseUrl } : {}),
-    ...((record.freeToRead ?? isOpenLicense(record.license)) && !record.withdrawnOn ? { freeToRead: true as const } : {}),
-    ...(record.fullTextUrl && !record.withdrawnOn ? { fullTextUrl: record.fullTextUrl } : {}),
+    ...readAccess(record),
+    ...(record.fullTextUrl && !record.withdrawnOn && !record.fileAccess ? { fullTextUrl: record.fullTextUrl } : {}),
+    ...(record.fileAccess && !record.withdrawnOn ? { fullTextClosed: true as const } : {}),
     ...(record.withdrawnOn ? { withdrawn: true as const } : {}),
     ...optionalField('publisherPlace', record.fields['place'])
   };

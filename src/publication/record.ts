@@ -68,6 +68,15 @@ export interface PublicationFunding {
   readonly awards: readonly string[];
 }
 
+/**
+ * Who may download a work's files when not everyone may: nobody but its owner, or, with `until` (YYYY-MM-DD), nobody
+ * before that day, an embargo. The record and its DOI stay public either way.
+ */
+export interface PublicationFileAccess {
+  readonly restricted: true;
+  readonly until?: string | undefined;
+}
+
 /** A licence of the author's own, which no vocabulary names: its name and the address of its text. */
 export interface PublicationCustomLicense {
   readonly title: string;
@@ -90,6 +99,8 @@ export interface PublicationMetadata {
   readonly customLicense?: PublicationCustomLicense | undefined;
   /** Anyone may read the work without paying, whatever its licence says. Left out, an open licence says so (`isOpenLicense`). */
   readonly freeToRead?: boolean | undefined;
+  /** Left out, anyone may download the work's files. */
+  readonly fileAccess?: PublicationFileAccess | undefined;
   readonly creators: readonly PublicationCreator[];
   readonly tags: readonly string[];
   readonly funding?: readonly PublicationFunding[] | undefined;
@@ -192,6 +203,7 @@ const publicationMetadataShape = {
   license: nonEmptyString.optional(),
   customLicense: z.object({ title: nonEmptyString, url: httpUrl }).strict().optional(),
   freeToRead: z.boolean().optional(),
+  fileAccess: z.object({ restricted: z.literal(true), until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, 'Expected YYYY-MM-DD').optional() }).strict().optional(),
   creators: z.array(publicationCreatorSchema),
   tags: z.array(nonEmptyString),
   funding: z.array(publicationFundingSchema).optional(),

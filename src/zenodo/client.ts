@@ -4,7 +4,7 @@ import type { ZenodoPreparedDraft, ZenodoPublishJournalOperationType } from './j
 import type { PublicationProviderMetadata } from '../publication/record.js';
 import { asJsonObject, toJsonValue } from '../json.js';
 import type { JsonValue } from '../hash.js';
-import { buildZenodoRecordPayload, programmingLanguageId, ZENODO_MANAGED_CUSTOM_FIELDS, ZENODO_MANAGED_METADATA_KEYS, type DoiPolicy, type ZenodoKnownRors, type ZenodoRecordPayload } from './rdm-payload.js';
+import { buildZenodoRecordPayload, programmingLanguageId, ZENODO_MANAGED_CUSTOM_FIELDS, ZENODO_MANAGED_METADATA_KEYS, ZENODO_PUBLIC_ACCESS, type DoiPolicy, type ZenodoKnownRors, type ZenodoRecordPayload } from './rdm-payload.js';
 import { ProviderHttpError, retryAfterMsFromHeaders, type ProviderResponseHeaders } from '../resilience/errors.js';
 import { DirectProviderOperationRunner, type ProviderOperationRunner } from '../resilience/provider-runner.js';
 import { asRecord, asString, idString } from '../guards.js';
@@ -492,8 +492,9 @@ export class ZenodoApiClient {
 
   /**
    * Writes the record's metadata to its draft in the InvenioRDM format, which takes what the legacy deposit API can't:
-   * affiliations and funders by ROR, roles, subtitles, funding for any funder, references, places. What the package
-   * doesn't own stays as the draft has it: access, files, communities and other custom fields. Answers what it wrote.
+   * affiliations and funders by ROR, roles, subtitles, funding for any funder, references, places, and who may download
+   * its files. What the package doesn't own stays as the draft has it: files, communities and other custom fields.
+   * Answers what it wrote.
    */
   private async writeDraftMetadata(token: string, recordId: string, input: ZenodoCreateRecordInput | ZenodoUpdateRecordMetadataInput): Promise<ZenodoRecordPayload> {
     const managed = await this.recordPayload(input);
@@ -503,7 +504,8 @@ export class ZenodoApiClient {
       method: 'PUT',
       headers: jsonHeadersWithAccept(token, ZENODO_INVENIORDM_ACCEPT),
       body: JSON.stringify({
-        ...(draft['access'] ? { access: draft['access'] } : {}),
+        // Whoever may download the files is the record's to say: files made private before open again when it says nothing.
+        access: { ...asRecord(draft['access']), ...(managed.access ?? ZENODO_PUBLIC_ACCESS) },
         ...(draft['files'] ? { files: draft['files'] } : {}),
         pids: managed.pids ?? draft['pids'] ?? {},
         metadata: { ...Object.fromEntries(Object.entries(asRecord(draft['metadata']) ?? {}).filter(([key]) => !ZENODO_MANAGED_METADATA_KEYS.has(key))), ...managed.metadata },

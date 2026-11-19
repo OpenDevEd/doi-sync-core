@@ -88,6 +88,7 @@ export type {
 	CreditRole,
 	PublicationAffiliation,
 	PublicationCreator,
+	PublicationFileAccess,
 	PublicationFunding,
 	PublicationLocation,
 	PublicationIdentifiers,
