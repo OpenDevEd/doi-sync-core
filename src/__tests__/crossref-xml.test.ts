@@ -135,6 +135,22 @@ describe('Crossref 5.5 publication XML', () => {
 		expect(xml).toContain('<ai:license_ref applies_to="vor">https://creativecommons.org/licenses/by/4.0/legalcode</ai:license_ref>');
 	});
 
+	it('says nothing is free to read and takes back the full text while the files are private, and from when they open under an embargo', () => {
+		const closed = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', { ...WORK_DETAILS, fileAccess: { restricted: true } })));
+		expect(closed).toContain('<collection property="text-mining"/><collection property="crawler-based"/>');
+		expect(closed).not.toContain('R100001/pdf');
+		expect(closed).not.toContain('ai:free_to_read');
+		expect(closed).toContain('<ai:license_ref applies_to="vor">https://creativecommons.org/licenses/by/4.0/legalcode</ai:license_ref>');
+
+		// Without a licence to state, the access program still goes, empty, to take back a free to read given before.
+		const unlicensed = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', { ...WORK_DETAILS, license: undefined, freeToRead: true, fileAccess: { restricted: true } })));
+		expect(unlicensed).toContain('<ai:program name="AccessIndicators"/>');
+
+		const embargoed = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', { ...WORK_DETAILS, fileAccess: { restricted: true, until: '2027-06-01' } })));
+		expect(embargoed).toContain('<ai:free_to_read start_date="2027-06-01"/>');
+		expect(embargoed).not.toContain('R100001/pdf');
+	});
+
 	it('deposits the subtitle, roles, affiliations by ROR and country, the funder\'s ROR, the licence and the full text', () => {
 		const xml = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', WORK_DETAILS)));
 

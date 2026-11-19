@@ -18,7 +18,28 @@ export interface ZenodoRecordPayload {
   readonly custom_fields: JsonObject;
   /** The DOI Zenodo registers the record under, when it is one we gave it. */
   readonly pids?: JsonObject;
+  /**
+   * Who may download its files, when not everyone may (`ZENODO_PUBLIC_ACCESS` otherwise, written but left out of the
+   * payload, so a record whose files were always public reads as it did before files could be private).
+   */
+  readonly access?: JsonObject;
 }
+
+/** Anyone may see the record and download its files: what a record whose payload has no `access` is written with. */
+export const ZENODO_PUBLIC_ACCESS: JsonObject = { record: 'public', files: 'public', embargo: { active: false } };
+
+/**
+ * The access a record is written and checked with on `today` (YYYY-MM-DD): its payload's, public when it has none, and
+ * public once its embargo's day has come, as Zenodo has lifted it by then and refuses an embargo dated in the past.
+ */
+export function zenodoAccessOn(access: JsonObject | undefined, today: string): JsonObject {
+  const embargo = access?.['embargo'];
+  const until = embargo && typeof embargo === 'object' && !Array.isArray(embargo) ? (embargo as JsonObject)['until'] : undefined;
+  return !access || (typeof until === 'string' && until <= today) ? ZENODO_PUBLIC_ACCESS : access;
+}
+
+/** Today in UTC, as InvenioRDM dates an embargo. */
+export const utcDay = (now: Date = new Date()) => now.toISOString().slice(0, 10);
 
 /** RORs Zenodo's vocabularies hold. One they lack is refused, so it goes by name. Left out, every ROR is taken as held. */
 export interface ZenodoKnownRors {
@@ -88,10 +109,10 @@ const IDENTIFIER_SCHEMES: Partial<Readonly<Record<PublicationRelation['identifie
 export function parseZenodoRecordPayload(input: unknown): ZenodoRecordPayload {
   const value = typeof input === 'object' && input !== null && !Array.isArray(input) ? input as Record<string, unknown> : null;
   const isObject = (entry: unknown): entry is JsonObject => typeof entry === 'object' && entry !== null && !Array.isArray(entry);
-  if (!value || !isObject(value['metadata']) || !isObject(value['custom_fields']) || (value['pids'] !== undefined && !isObject(value['pids']))) {
+  if (!value || !isObject(value['metadata']) || !isObject(value['custom_fields']) || (value['pids'] !== undefined && !isObject(value['pids'])) || (value['access'] !== undefined && !isObject(value['access']))) {
     throw new Error('Expected a Zenodo record payload in the InvenioRDM format');
   }
-  return { metadata: value['metadata'], custom_fields: value['custom_fields'], ...(value['pids'] ? { pids: value['pids'] } : {}) };
+  return { metadata: value['metadata'], custom_fields: value['custom_fields'], ...(value['pids'] ? { pids: value['pids'] } : {}), ...(value['access'] ? { access: value['access'] } : {}) };
 }
 
 export function buildZenodoRecordPayload(input: ZenodoRecordPayloadInput): ZenodoRecordPayload {
@@ -198,8 +219,17 @@ export function buildZenodoRecordPayload(input: ZenodoRecordPayloadInput): Zenod
   return {
     metadata: output,
     custom_fields: customFields,
-    ...(input.doiPolicy === 'external-crossref' && metadata.doi ? { pids: { doi: { identifier: metadata.doi, provider: 'external' } } } : {})
+    ...(input.doiPolicy === 'external-crossref' && metadata.doi ? { pids: { doi: { identifier: metadata.doi, provider: 'external' } } } : {}),
+    ...(metadata.fileAccess ? { access: restrictedAccess(metadata.fileAccess.until) } : {})
   };
+}
+
+/**
+ * A record whose files nobody downloads but its owner, or nobody before `until`: InvenioRDM's embargo, which Zenodo
+ * lifts on that day by itself. The record and its DOI stay public, as a DOI has to.
+ */
+function restrictedAccess(until: string | undefined): JsonObject {
+  return { record: 'public', files: 'restricted', embargo: until ? { active: true, until, reason: 'The files open on this date.' } : { active: false } };
 }
 
 /**

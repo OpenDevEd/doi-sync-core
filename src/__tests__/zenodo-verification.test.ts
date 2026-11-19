@@ -64,13 +64,24 @@ function record(metadata: Readonly<Record<string, unknown>> = {}, rest: Readonly
 			...metadata
 		},
 		custom_fields: { 'code:codeRepository': 'provider-owned' },
+		access: OPEN,
 		...rest
 	};
 }
 
+/** Who may download a record's files, as Zenodo serves it for one whose files are public. */
+const OPEN = { record: 'public', files: 'public', embargo: { active: false, reason: null }, status: 'open' };
+
 describe('Zenodo published-state verification', () => {
 	it('matches what was written inside what Zenodo adds to it', () => {
 		expect(verifyZenodoRecordState({ deposition: deposition(), record: record(), expectedPayload, expectedFiles })).toEqual({ status: 'matched' });
+	});
+
+	it('calls files left public a drift when they were to be private, until the embargo\'s day has come', () => {
+		const embargoed = { ...expectedPayload, access: { record: 'public', files: 'restricted', embargo: { active: true, until: '2027-06-01', reason: 'The files open on this date.' } } };
+		expect(verifyZenodoRecordState({ deposition: deposition(), record: record(), expectedPayload: embargoed, expectedFiles, today: '2027-05-31' })).toMatchObject({ status: 'drifted', metadataReasons: ['access.embargo.active', 'access.embargo.reason', 'access.embargo.until', 'access.files'] });
+		// Zenodo lifts the embargo on its day, and the record is then expected with public files.
+		expect(verifyZenodoRecordState({ deposition: deposition(), record: record(), expectedPayload: embargoed, expectedFiles, today: '2027-06-01' })).toEqual({ status: 'matched' });
 	});
 
 	it('reports every managed metadata and file difference', () => {
@@ -93,7 +104,7 @@ describe('Zenodo published-state verification', () => {
 		});
 		expect(verifyZenodoRecordState({
 			deposition: deposition({ files: [] }),
-			record: { metadata: externalPayload.metadata, custom_fields: {}, pids: { doi: { identifier: '10.1234/changed', provider: 'external' } } },
+			record: { metadata: externalPayload.metadata, custom_fields: {}, pids: { doi: { identifier: '10.1234/changed', provider: 'external' } }, access: OPEN },
 			expectedPayload: externalPayload,
 			expectedFiles: []
 		})).toEqual({ status: 'drifted', metadataReasons: ['pids.doi.identifier'], fileReasons: [] });

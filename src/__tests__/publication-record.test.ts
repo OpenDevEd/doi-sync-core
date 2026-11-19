@@ -29,6 +29,12 @@ describe('publication record contract', () => {
     });
   });
 
+  it('takes files kept private until a day that exists, and refuses one that doesn\'t', () => {
+    const snapshot = (until: string) => parsePublicationRecordSnapshot({ recordKey: 'REPORT01', canonicalRevision: 1, itemType: 'Report', title: 'Evidence synthesis', publicationDate: '2026-08-11', creators: [], tags: [], landingUrl: 'https://example.org/items/REPORT01', fields: {}, fileAccess: { restricted: true, until } });
+    expect(snapshot('2028-02-29').fileAccess).toEqual({ restricted: true, until: '2028-02-29' });
+    expect(() => snapshot('2027-02-30')).toThrow();
+  });
+
   it('rejects a non-positive canonical revision', () => {
     expect(() => parsePublicationRecordSnapshot({
       recordKey: 'REPORT01',

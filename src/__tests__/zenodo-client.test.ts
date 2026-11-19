@@ -667,9 +667,10 @@ describe('ZenodoApiClient', () => {
           Accept: ZENODO_INVENIORDM_ACCEPT,
       Authorization: 'Bearer sandbox-token'
     });
-    // The draft keeps its access, files and the custom fields the package doesn't own; the metadata is the package's.
+    // The draft keeps its files and the custom fields the package doesn't own; the metadata and who may download the
+    // files are the package's: a record that says nothing has public files.
     expect(JSON.parse(calls[3]?.init.body as string)).toEqual({
-      access: { record: 'public', files: 'public' },
+      access: { record: 'public', files: 'public', embargo: { active: false } },
       files: { enabled: true },
       pids: {},
       metadata: buildZenodoRecordPayload({
@@ -686,6 +687,14 @@ describe('ZenodoApiClient', () => {
       }).metadata,
       custom_fields: { 'code:codeRepository': 'https://example.org/provider-owned' }
     });
+  });
+
+  it('keeps a record\'s files private, or private until a day, while the record stays public', () => {
+    const metadata = { itemType: 'Report', title: 'Evidence report', publicationDate: '2026-05-20', creators: [{ type: 'organizational' as const, name: 'OpenDevEd' }], tags: [] };
+    expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, fileAccess: { restricted: true } } }).access).toEqual({ record: 'public', files: 'restricted', embargo: { active: false } });
+    expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata: { ...metadata, fileAccess: { restricted: true, until: '2027-06-01' } } }).access).toMatchObject({ record: 'public', files: 'restricted', embargo: { active: true, until: '2027-06-01' } });
+    // A record whose files are public reads as it did before files could be private, so it isn't deposited again for it.
+    expect(buildZenodoRecordPayload({ doiPolicy: 'dual', metadata })).not.toHaveProperty('access');
   });
 
   it('deletes an unpublished Zenodo draft through the legacy deposition API', async () => {
