@@ -190,6 +190,12 @@ const publicationRelationSchema: z.ZodType<PublicationRelation> = z.object({
   description: nonEmptyString.optional()
 }).strict();
 
+/** A day that exists, written YYYY-MM-DD: 2027-02-30 is refused. */
+const calendarDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, 'Expected YYYY-MM-DD').refine((day) => {
+  const date = new Date(`${day}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day;
+}, 'Expected a day that exists');
+
 const publicationMetadataShape = {
   itemType: nonEmptyString,
   title: nonEmptyString,
@@ -203,7 +209,7 @@ const publicationMetadataShape = {
   license: nonEmptyString.optional(),
   customLicense: z.object({ title: nonEmptyString, url: httpUrl }).strict().optional(),
   freeToRead: z.boolean().optional(),
-  fileAccess: z.object({ restricted: z.literal(true), until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, 'Expected YYYY-MM-DD').optional() }).strict().optional(),
+  fileAccess: z.object({ restricted: z.literal(true), until: calendarDay.optional() }).strict().optional(),
   creators: z.array(publicationCreatorSchema),
   tags: z.array(nonEmptyString),
   funding: z.array(publicationFundingSchema).optional(),
@@ -216,7 +222,7 @@ const publicationMetadataShape = {
   formats: z.array(nonEmptyString).optional(),
   fullTextUrl: httpUrl.optional(),
   copyright: nonEmptyString.optional(),
-  withdrawnOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, 'Expected YYYY-MM-DD').optional()
+  withdrawnOn: calendarDay.optional()
 };
 
 export const publicationMetadataSchema = z.object(publicationMetadataShape).strict() satisfies z.ZodType<PublicationMetadata>;

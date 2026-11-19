@@ -2,7 +2,7 @@ import { asBoolean, asRecord, asString } from '../guards.js';
 import { stableJson, type JsonValue } from '../hash.js';
 import { asJsonObject, toJsonValue, type JsonObject } from '../json.js';
 import { compareCodeUnits } from '../sort.js';
-import type { ZenodoRecordPayload } from './rdm-payload.js';
+import { utcDay, zenodoAccessOn, type ZenodoRecordPayload } from './rdm-payload.js';
 
 export interface ZenodoExpectedPublishedFile {
 	readonly filename: string;
@@ -35,6 +35,8 @@ export function verifyZenodoRecordState(input: {
 	readonly record: unknown;
 	readonly expectedPayload: ZenodoRecordPayload;
 	readonly expectedFiles: readonly ZenodoExpectedPublishedFile[];
+	/** The day it is checked on (YYYY-MM-DD), which decides whether an embargo has been lifted. */
+	readonly today?: string;
 }): ZenodoPublishedStateVerification {
 	const deposition = asRecord(input.deposition);
 	if (!deposition) throw new Error('Expected Zenodo deposition response object');
@@ -46,7 +48,9 @@ export function verifyZenodoRecordState(input: {
 	const metadataReasons = [
 		...differences(input.expectedPayload.metadata, record['metadata'], 'metadata'),
 		...differences(input.expectedPayload.custom_fields, record['custom_fields'], 'custom_fields'),
-		...(input.expectedPayload.pids ? differences(input.expectedPayload.pids, record['pids'], 'pids') : [])
+		...(input.expectedPayload.pids ? differences(input.expectedPayload.pids, record['pids'], 'pids') : []),
+		// Who may download the files, as it was written: files left public when they were to be private are a drift.
+		...differences(zenodoAccessOn(input.expectedPayload.access, input.today ?? utcDay()), record['access'], 'access')
 	].sort(compareCodeUnits);
 	const fileReasons = publishedFileDifferences(
 		parseZenodoLegacyDepositionFiles(deposition['files']),

@@ -142,6 +142,10 @@ describe('Crossref 5.5 publication XML', () => {
 		expect(closed).not.toContain('ai:free_to_read');
 		expect(closed).toContain('<ai:license_ref applies_to="vor">https://creativecommons.org/licenses/by/4.0/legalcode</ai:license_ref>');
 
+		// Without a licence to state, the access program still goes, empty, to take back a free to read given before.
+		const unlicensed = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', { ...WORK_DETAILS, license: undefined, freeToRead: true, fileAccess: { restricted: true } })));
+		expect(unlicensed).toContain('<ai:program name="AccessIndicators"/>');
+
 		const embargoed = buildCrossrefPublicationXml(xmlInput(mappedRecord('Report', { ...WORK_DETAILS, fileAccess: { restricted: true, until: '2027-06-01' } })));
 		expect(embargoed).toContain('<ai:free_to_read start_date="2027-06-01"/>');
 		expect(embargoed).not.toContain('R100001/pdf');

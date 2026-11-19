@@ -435,8 +435,13 @@ function appendDoiData(parent: XMLBuilder, doi: string, resourceUrl: string, ful
 }
 
 /** The licence the work is under, for the version of record and for text mining, and whether anyone may read it. */
-function appendAccess(parent: XMLBuilder, record: Pick<CrossrefMappedRecord, 'licenseUrl' | 'freeToRead' | 'freeToReadFrom'>): void {
-	if (!record.licenseUrl && !record.freeToRead) return;
+function appendAccess(parent: XMLBuilder, record: Pick<CrossrefMappedRecord, 'licenseUrl' | 'freeToRead' | 'freeToReadFrom' | 'withdrawn' | 'fullTextClosed'>): void {
+	// A work no longer free to read sends the program empty, so Crossref drops a free to read an earlier deposit gave
+	// (crossref.org/documentation/register-maintain-records/maintaining-your-metadata/metadata-removal-markup-guide).
+	if (!record.licenseUrl && !record.freeToRead) {
+		if (record.withdrawn || record.fullTextClosed) parent.ele('ai:program', { name: 'AccessIndicators' });
+		return;
+	}
 	const program = parent.ele('ai:program', { name: 'AccessIndicators' });
 	if (record.freeToRead) program.ele('ai:free_to_read', record.freeToReadFrom ? { start_date: record.freeToReadFrom } : {});
 	if (!record.licenseUrl) return;

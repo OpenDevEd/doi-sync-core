@@ -4,7 +4,7 @@ import type { ZenodoPreparedDraft, ZenodoPublishJournalOperationType } from './j
 import type { PublicationProviderMetadata } from '../publication/record.js';
 import { asJsonObject, toJsonValue } from '../json.js';
 import type { JsonValue } from '../hash.js';
-import { buildZenodoRecordPayload, programmingLanguageId, ZENODO_MANAGED_CUSTOM_FIELDS, ZENODO_MANAGED_METADATA_KEYS, ZENODO_PUBLIC_ACCESS, type DoiPolicy, type ZenodoKnownRors, type ZenodoRecordPayload } from './rdm-payload.js';
+import { buildZenodoRecordPayload, programmingLanguageId, ZENODO_MANAGED_CUSTOM_FIELDS, ZENODO_MANAGED_METADATA_KEYS, utcDay, zenodoAccessOn, type DoiPolicy, type ZenodoKnownRors, type ZenodoRecordPayload } from './rdm-payload.js';
 import { ProviderHttpError, retryAfterMsFromHeaders, type ProviderResponseHeaders } from '../resilience/errors.js';
 import { DirectProviderOperationRunner, type ProviderOperationRunner } from '../resilience/provider-runner.js';
 import { asRecord, asString, idString } from '../guards.js';
@@ -505,7 +505,7 @@ export class ZenodoApiClient {
       headers: jsonHeadersWithAccept(token, ZENODO_INVENIORDM_ACCEPT),
       body: JSON.stringify({
         // Whoever may download the files is the record's to say: files made private before open again when it says nothing.
-        access: { ...asRecord(draft['access']), ...(managed.access ?? ZENODO_PUBLIC_ACCESS) },
+        access: { ...asRecord(draft['access']), ...zenodoAccessOn(managed.access, utcDay()) },
         ...(draft['files'] ? { files: draft['files'] } : {}),
         pids: managed.pids ?? draft['pids'] ?? {},
         metadata: { ...Object.fromEntries(Object.entries(asRecord(draft['metadata']) ?? {}).filter(([key]) => !ZENODO_MANAGED_METADATA_KEYS.has(key))), ...managed.metadata },

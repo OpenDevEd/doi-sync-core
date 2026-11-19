@@ -28,6 +28,19 @@ export interface ZenodoRecordPayload {
 /** Anyone may see the record and download its files: what a record whose payload has no `access` is written with. */
 export const ZENODO_PUBLIC_ACCESS: JsonObject = { record: 'public', files: 'public', embargo: { active: false } };
 
+/**
+ * The access a record is written and checked with on `today` (YYYY-MM-DD): its payload's, public when it has none, and
+ * public once its embargo's day has come, as Zenodo has lifted it by then and refuses an embargo dated in the past.
+ */
+export function zenodoAccessOn(access: JsonObject | undefined, today: string): JsonObject {
+  const embargo = access?.['embargo'];
+  const until = embargo && typeof embargo === 'object' && !Array.isArray(embargo) ? (embargo as JsonObject)['until'] : undefined;
+  return !access || (typeof until === 'string' && until <= today) ? ZENODO_PUBLIC_ACCESS : access;
+}
+
+/** Today in UTC, as InvenioRDM dates an embargo. */
+export const utcDay = (now: Date = new Date()) => now.toISOString().slice(0, 10);
+
 /** RORs Zenodo's vocabularies hold. One they lack is refused, so it goes by name. Left out, every ROR is taken as held. */
 export interface ZenodoKnownRors {
   readonly affiliations: ReadonlySet<string>;
