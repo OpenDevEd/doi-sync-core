@@ -6,6 +6,11 @@ import * as publicApi from '../index.js';
 
 const expectedRuntimeExports = [
 	'CrossrefApiClient',
+	'DOCID_AUTHOR_ROLE',
+	'DocidApiClient',
+	'IDENTIFIER_SERVICES',
+	'IDENTIFIER_SERVICE_IDS',
+	'buildDocidDeposit',
 	'CROSSREF_PAYLOAD_FORMAT',
 	'DirectProviderOperationRunner',
 	'ProviderHttpError',
