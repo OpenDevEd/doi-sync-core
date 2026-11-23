@@ -92,7 +92,7 @@ describe('DocidApiClient', () => {
   it('signs in and renews the token under the names DOCiD gives them', async () => {
     const { calls, fetch } = recording(reply(LOGIN), reply({ access_token: 'jwt-renewed' }));
     const client = new DocidApiClient({ fetch, endpoint: 'https://docid.example/' });
-    await expect(client.signIn({ email: 'a@b.c', password: 'p' })).resolves.toEqual({ token: 'jwt-access', refreshToken: 'jwt-refresh' });
+    await expect(client.signIn({ email: 'a@b.c', password: 'p' })).resolves.toEqual({ token: 'jwt-access', refreshToken: 'jwt-refresh', userId: 203 });
     await expect(client.refresh({ refreshToken: 'jwt-refresh' })).resolves.toBe('jwt-renewed');
     expect(calls.map((call) => call.url)).toEqual(['https://docid.example/api/v1/auth/login', 'https://docid.example/api/v1/auth/refresh']);
     expect(header(calls[1]!.init, 'Authorization')).toBe('Bearer jwt-refresh');
@@ -143,6 +143,14 @@ describe('DocidApiClient', () => {
     expect((calls[0]!.init.body as FormData).get('documentTitle')).toBe('Corrected');
     expect((calls[0]!.init.body as FormData).has('documentDescription')).toBe(false);
     expect(JSON.parse(calls[1]!.init.body as string)).toEqual({ reason: 'Withdrawn by its authors' });
+  });
+
+  it('finds the record the account already deposited under a DOCiD', async () => {
+    const { calls, fetch } = recording(reply([{ id: 4321, document_docid: '20.500.14351/9f2c1e' }, { id: 4300, document_docid: '20.500.14351/aaaaaa' }]), reply([]));
+    const client = new DocidApiClient({ fetch });
+    await expect(client.findDeposit({ token: 't', userId: 203, docid: '20.500.14351/9f2c1e' })).resolves.toBe(4321);
+    await expect(client.findDeposit({ token: 't', userId: 203, docid: '20.500.14351/9f2c1e' })).resolves.toBeNull();
+    expect(calls[0]!.url).toBe('https://docid.africapidalliance.org/api/v1/publications/my-docids/203');
   });
 
   it('raises what DOCiD said, retryable only when it is busy or down', async () => {

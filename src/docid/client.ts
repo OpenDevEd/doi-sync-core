@@ -23,6 +23,8 @@ export interface DocidApiClientOptions {
 export interface DocidSession {
   readonly token: string;
   readonly refreshToken: string;
+  /** The account's id, which its own records are listed under (`findDeposit`). */
+  readonly userId: number;
 }
 
 /**
@@ -42,7 +44,9 @@ export class DocidApiClient {
 
   async signIn(input: { readonly email: string; readonly password: string }): Promise<DocidSession> {
     const body = asRecord(await this.json('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }));
-    return { token: required(body?.['token'], 'token'), refreshToken: required(body?.['refresh_token'], 'refresh_token') };
+    const userId = body?.['user_id'];
+    if (typeof userId !== 'number') throw new Error('DOCiD answered a sign-in without user_id.');
+    return { token: required(body?.['token'], 'token'), refreshToken: required(body?.['refresh_token'], 'refresh_token'), userId };
   }
 
   /** A new sign-in token from the refresh token, which DOCiD names `access_token` here. */
@@ -69,6 +73,17 @@ export class DocidApiClient {
     const publicationId = body?.['publication_id'];
     if (typeof publicationId !== 'number') throw new Error('DOCiD answered a deposit without a publication_id.');
     return { publicationId, docid: required(publication?.['document_docid'], 'publication.document_docid') };
+  }
+
+  /**
+   * The account's own record deposited under a DOCiD, or null when it has none. A deposit DOCiD took but whose answer
+   * never arrived is found here, so it is never sent a second time.
+   */
+  async findDeposit(input: { readonly token: string; readonly userId: number; readonly docid: string }): Promise<number | null> {
+    const rows = await this.json(`/publications/my-docids/${input.userId}`, { method: 'GET', headers: { Authorization: `Bearer ${input.token}` } });
+    if (!Array.isArray(rows)) throw new Error('DOCiD answered its list of records without a list.');
+    const found = rows.map(asRecord).find((row) => row?.['document_docid'] === input.docid);
+    return typeof found?.['id'] === 'number' ? found['id'] : null;
   }
 
   /**
