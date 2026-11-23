@@ -60,9 +60,11 @@ describe('buildDocidDeposit', () => {
       'creators[1][affiliation]': 'University of Zambia',
       // Each organization once, and each list counted from 0, as DOCiD reads each prefix until a gap.
       'organizationRor[0][name]': 'University of Zambia',
+      'organizationRor[0][type]': '',
       'organizationRor[0][country]': 'ZM',
       'organizationRor[0][ror_id]': '03gh19d69',
       'organization[0][name]': 'Zambia Social Policy Institute',
+      'organization[0][type]': '',
       'funders[0][name]': 'Wellcome Trust',
       'funders[0][type]': '1',
       'funders[0][ror_id]': '029chgv08',
@@ -116,6 +118,11 @@ describe('DocidApiClient', () => {
     const deposit = buildDocidDeposit({ title: 'T', creators: [] }, { docid: '20.500.14351/9f2c1e', resourceTypeId: 18 });
     await expect(new DocidApiClient({ fetch, operationRunner: runner }).deposit({ token: 't', deposit })).resolves.toEqual({ publicationId: 4321, docid: '20.500.14351/9f2c1e' });
     expect(ran).toEqual(['once']);
+    // A runner with no runOnce of its own is not used to send it, since its run may retry.
+    const retrying: ProviderOperationRunner = { run: async (_p, op) => { await op().catch(() => undefined); return op(); }, close: () => Promise.resolve() };
+    const twice = recording(reply({ error: 'down' }, 503), reply(PUBLISHED));
+    await expect(new DocidApiClient({ fetch: twice.fetch, operationRunner: retrying }).deposit({ token: 't', deposit })).rejects.toMatchObject({ status: 503 });
+    expect(twice.calls).toHaveLength(1);
     const form = calls[0]!.init.body as FormData;
     expect(form.get('documentDocid')).toBe('20.500.14351/9f2c1e');
     expect(form.get('resourceType')).toBe('18');

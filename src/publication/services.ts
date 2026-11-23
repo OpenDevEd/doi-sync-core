@@ -14,8 +14,8 @@ export const IDENTIFIER_SERVICES = {
   zenodo: {
     name: 'Zenodo',
     identifier: 'doi',
-    // Its DOI comes from a draft deposit, which a host only makes once the work is accepted.
-    reservesBeforeReview: false,
+    // A draft deposit reserves its DOI; a host decides whether to make the draft before review.
+    reservesBeforeReview: true,
     acceptsExistingDoi: true,
     archivesFile: true
   },

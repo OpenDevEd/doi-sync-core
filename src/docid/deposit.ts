@@ -9,6 +9,8 @@ export interface DocidAffiliation {
   readonly ror?: string | undefined;
   /** ISO 3166-1 alpha-2. */
   readonly country?: string | undefined;
+  /** ROR's type for the organisation ("education", "funder"…), which DOCiD keeps; empty when unknown, as its own form sends. */
+  readonly type?: string | undefined;
 }
 
 export interface DocidCreator {
@@ -97,7 +99,8 @@ export function buildDocidDeposit(record: DocidRecordInput, options: DocidDeposi
   for (const affiliation of organizations.values()) {
     const prefix = affiliation.ror ? 'organizationRor' : 'organization';
     const at = `${prefix}[${counts[prefix]++}]`;
-    fields.push([`${at}[name]`, affiliation.name]);
+    // DOCiD stores every organisation's type in a column that can't be null.
+    fields.push([`${at}[name]`, affiliation.name], [`${at}[type]`, affiliation.type ?? '']);
     if (affiliation.country) fields.push([`${at}[country]`, affiliation.country]);
     if (affiliation.ror) fields.push([`${at}[ror_id]`, affiliation.ror]);
   }

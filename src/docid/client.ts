@@ -99,7 +99,9 @@ export class DocidApiClient {
       return response.json();
     };
     const runner = this.operationRunner;
-    return options.once && runner.runOnce ? runner.runOnce('docid', operation) : runner.run('docid', operation);
+    // A deposit is sent once whatever the runner: without its own runOnce it isn't handed to a runner that retries.
+    if (options.once) return runner.runOnce ? runner.runOnce('docid', operation) : operation();
+    return runner.run('docid', operation);
   }
 }
 
