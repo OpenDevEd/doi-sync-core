@@ -71,9 +71,16 @@ export class DocidApiClient {
     return { publicationId, docid: required(publication?.['document_docid'], 'publication.document_docid') };
   }
 
-  /** Adds the DOI a record was given after its deposit. Only the depositing account may. */
-  async addDoi(input: { readonly token: string; readonly publicationId: number; readonly doi: string }): Promise<void> {
-    await this.json(`/publications/update-publication/${input.publicationId}`, { method: 'PUT', headers: { Authorization: `Bearer ${input.token}` }, body: formOf({ fields: [['doi', input.doi]], files: [] }) });
+  /**
+   * Changes a deposited record: its title, its description and its DOI, which DOCiD lets the depositing account
+   * change after the deposit. What isn't given stays as DOCiD holds it.
+   */
+  async update(input: { readonly token: string; readonly publicationId: number; readonly title?: string; readonly description?: string; readonly doi?: string }): Promise<void> {
+    const fields: Array<readonly [string, string]> = [];
+    if (input.title) fields.push(['documentTitle', input.title]);
+    if (input.description) fields.push(['documentDescription', input.description]);
+    if (input.doi) fields.push(['doi', input.doi]);
+    await this.json(`/publications/update-publication/${input.publicationId}`, { method: 'PUT', headers: { Authorization: `Bearer ${input.token}` }, body: formOf({ fields, files: [] }) });
   }
 
   /** Retires the record: its DOCiD keeps resolving, to a tombstone. */
