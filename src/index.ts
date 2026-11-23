@@ -223,3 +223,9 @@ export type {
 	ZenodoLegacyDepositionFile,
 	ZenodoPublishedStateVerification
 } from './zenodo/verification.js';
+export { DocidApiClient } from './docid/client.js';
+export type { DocidApiClientOptions, DocidFetchLike, DocidResponseLike, DocidSession } from './docid/client.js';
+export { DOCID_AUTHOR_ROLE, buildDocidDeposit } from './docid/deposit.js';
+export type { DocidAffiliation, DocidCreator, DocidDeposit, DocidDepositOptions, DocidFile, DocidFunder, DocidRecordInput } from './docid/deposit.js';
+export { IDENTIFIER_SERVICES, IDENTIFIER_SERVICE_IDS } from './publication/services.js';
+export type { IdentifierService, IdentifierServiceId } from './publication/services.js';
