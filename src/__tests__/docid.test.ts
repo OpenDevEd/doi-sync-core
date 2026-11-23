@@ -128,10 +128,10 @@ describe('DocidApiClient', () => {
     expect(form.get('resourceType')).toBe('18');
   });
 
-  it('adds a DOI, withdraws and reinstates at the record routes', async () => {
+  it('updates a record, withdraws and reinstates at the record routes', async () => {
     const { calls, fetch } = recording(reply({ message: 'ok' }), reply({ message: 'retired' }), reply({ message: 'restored' }));
     const client = new DocidApiClient({ fetch });
-    await client.addDoi({ token: 't', publicationId: 4321, doi: '10.53832/x' });
+    await client.update({ token: 't', publicationId: 4321, title: 'Corrected', doi: '10.53832/x' });
     await client.withdraw({ token: 't', publicationId: 4321, reason: 'Withdrawn by its authors' });
     await client.reinstate({ token: 't', publicationId: 4321 });
     expect(calls.map((call) => `${call.init.method} ${call.url.replace('https://docid.africapidalliance.org/api/v1', '')}`)).toEqual([
@@ -140,6 +140,8 @@ describe('DocidApiClient', () => {
       'POST /publications/4321/restore'
     ]);
     expect((calls[0]!.init.body as FormData).get('doi')).toBe('10.53832/x');
+    expect((calls[0]!.init.body as FormData).get('documentTitle')).toBe('Corrected');
+    expect((calls[0]!.init.body as FormData).has('documentDescription')).toBe(false);
     expect(JSON.parse(calls[1]!.init.body as string)).toEqual({ reason: 'Withdrawn by its authors' });
   });
 
