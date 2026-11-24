@@ -18,6 +18,10 @@
     "./display": {
       "types": "./dist/display.d.ts",
       "default": "./dist/display.js"
+    },
+    "./docid": {
+      "types": "./dist/docid/deposit.d.ts",
+      "default": "./dist/docid/deposit.js"
     }
   },
   "files": [

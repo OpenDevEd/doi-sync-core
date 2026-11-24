@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DocidApiClient, type DocidFetchLike, type DocidResponseLike } from '../docid/client.js';
-import { buildDocidDeposit, type DocidRecordInput } from '../docid/deposit.js';
+import { buildDocidDeposit, docidResourceType, type DocidLists } from '../docid/deposit.js';
+import type { PublicationProviderMetadata } from '../publication/record.js';
 import { ProviderHttpError } from '../resilience/errors.js';
 import type { ProviderOperationRunner } from '../resilience/provider-runner.js';
 
@@ -26,26 +27,38 @@ function recording(...replies: DocidResponseLike[]) {
 
 const header = (init: RequestInit, name: string) => (init.headers as Record<string, string>)[name];
 
-const record: DocidRecordInput = {
+// DOCiD's lists as its production API gave them on 2026-11-23, with the two resource types its Publisher accounts may use.
+const LISTS: DocidLists = {
+  resourceTypes: [{ id: 21, name: 'Manuscripts' }, { id: 22, name: 'Book' }],
+  publicationTypes: [{ id: 1, name: 'Article' }, { id: 5, name: 'Monograph' }, { id: 19, name: 'Book' }],
+  funderTypes: [{ id: 1, name: 'Grantor' }, { id: 2, name: 'Investor' }, { id: 3, name: 'Corporation' }]
+};
+
+const record: PublicationProviderMetadata = {
+  itemType: 'Report',
   title: 'Monthly cash transfers to older people in Lusaka',
+  publicationDate: '2026-11-01',
   abstract: 'We interviewed 42 recipients.',
   doi: '10.53832/openscholar-reports.r100700',
+  tags: [],
   creators: [
-    { name: 'Phiri, Mwila', givenName: 'Mwila', familyName: 'Phiri', orcid: '0000-0002-1825-0097', affiliations: [{ name: 'University of Zambia', ror: '03gh19d69', country: 'ZM' }, { name: 'Zambia Social Policy Institute' }] },
-    { name: 'Chanda Mulenga', affiliations: [{ name: 'University of Zambia', ror: '03gh19d69', country: 'ZM' }] }
+    { type: 'personal', name: 'Phiri, Mwila', creatorType: 'author', givenName: 'Mwila', familyName: 'Phiri', orcid: '0000-0002-1825-0097', affiliations: [{ name: 'University of Zambia', ror: '03gh19d69', country: 'ZM' }, { name: 'Zambia Social Policy Institute' }] },
+    { type: 'personal', name: 'Chanda Mulenga', affiliations: [{ name: 'University of Zambia', ror: '03gh19d69', country: 'ZM' }] },
+    { type: 'organizational', name: 'World Health Organization', creatorType: 'author' },
+    { type: 'personal', name: 'Banda, Grace', creatorType: 'editor', givenName: 'Grace', familyName: 'Banda' }
   ],
-  funding: [{ funderName: 'Wellcome Trust', funderRor: '029chgv08' }]
+  funding: [{ funderName: 'Wellcome Trust', funderRor: '029chgv08', awards: [] }, { funderName: 'Zambia Impact Fund', funderType: 'investor', awards: [] }]
 };
 
 describe('buildDocidDeposit', () => {
-  it('names every field as DOCiD reads it', () => {
+  it('names every field as DOCiD reads it, with each type found by its name', () => {
     const pdf = { filename: 'report.pdf', contentType: 'application/pdf', bytes: new Uint8Array([37, 80]) };
-    const { fields, files } = buildDocidDeposit(record, { docid: '20.500.14351/9f2c1e', resourceTypeId: 18, publicationTypeId: 5, funderTypeId: 1, file: pdf });
+    const { fields, files } = buildDocidDeposit(record, { docid: '20.500.14351/9f2c1e', lists: LISTS, organizationTypes: { '03gh19d69': 'education' }, file: pdf });
     expect(Object.fromEntries(fields)).toEqual({
       documentDocid: '20.500.14351/9f2c1e',
       documentTitle: record.title,
       documentDescription: record.abstract,
-      resourceType: '18',
+      resourceType: '21',
       doi: record.doi,
       'creators[0][family_name]': 'Phiri',
       'creators[0][given_name]': 'Mwila',
@@ -58,9 +71,13 @@ describe('buildDocidDeposit', () => {
       'creators[1][given_name]': 'Chanda',
       'creators[1][role]': '8',
       'creators[1][affiliation]': 'University of Zambia',
+      // A body keeps its name whole; the editor isn't an author, which is the only role DOCiD is sent.
+      'creators[2][family_name]': 'World Health Organization',
+      'creators[2][given_name]': '',
+      'creators[2][role]': '8',
       // Each organization once, and each list counted from 0, as DOCiD reads each prefix until a gap.
       'organizationRor[0][name]': 'University of Zambia',
-      'organizationRor[0][type]': '',
+      'organizationRor[0][type]': 'education',
       'organizationRor[0][country]': 'ZM',
       'organizationRor[0][ror_id]': '03gh19d69',
       'organization[0][name]': 'Zambia Social Policy Institute',
@@ -68,6 +85,8 @@ describe('buildDocidDeposit', () => {
       'funders[0][name]': 'Wellcome Trust',
       'funders[0][type]': '1',
       'funders[0][ror_id]': '029chgv08',
+      'funders[1][name]': 'Zambia Impact Fund',
+      'funders[1][type]': '2',
       'filesPublications[0][title]': record.title,
       'filesPublications[0][description]': 'Full text',
       'filesPublications[0][publication_type]': '5',
@@ -76,15 +95,23 @@ describe('buildDocidDeposit', () => {
     expect(files).toEqual([['filesPublications_0_file', pdf]]);
   });
 
+  it('files a book as a Book where the account may, and everything else as Manuscripts', () => {
+    expect(docidResourceType('Book', LISTS.resourceTypes)?.id).toBe(22);
+    expect(docidResourceType('Book', [{ id: 21, name: 'Manuscripts' }])?.id).toBe(21);
+    expect(docidResourceType('Thesis', LISTS.resourceTypes)?.id).toBe(21);
+    const pdf = { filename: 'a.pdf', contentType: 'application/pdf', bytes: new Uint8Array() };
+    const article = Object.fromEntries(buildDocidDeposit({ ...record, itemType: 'JournalArticle' }, { docid: 'x', lists: LISTS, file: pdf }).fields);
+    expect(article['filesPublications[0][publication_type]']).toBe('1');
+  });
+
   it('sends the title as the description DOCiD requires when there is no abstract', () => {
-    const { fields } = buildDocidDeposit({ title: 'A report', creators: [] }, { docid: 'x', resourceTypeId: 1 });
+    const { fields } = buildDocidDeposit({ ...record, abstract: undefined, title: 'A report', creators: [], funding: [] }, { docid: 'x', lists: LISTS });
     expect(Object.fromEntries(fields)['documentDescription']).toBe('A report');
   });
 
-  it('refuses funders or a file without the type ids DOCiD requires for them', () => {
-    expect(() => buildDocidDeposit(record, { docid: 'x', resourceTypeId: 1 })).toThrow(/funderTypeId/);
-    const file = { filename: 'a.pdf', contentType: 'application/pdf', bytes: new Uint8Array() };
-    expect(() => buildDocidDeposit({ ...record, funding: [] }, { docid: 'x', resourceTypeId: 1, file })).toThrow(/publicationTypeId/);
+  it('refuses a deposit the account may not file, or a type DOCiD has no entry for', () => {
+    expect(() => buildDocidDeposit(record, { docid: 'x', lists: { ...LISTS, resourceTypes: [] } })).toThrow(/Manuscripts/);
+    expect(() => buildDocidDeposit(record, { docid: 'x', lists: { ...LISTS, funderTypes: [{ id: 1, name: 'Grantor' }] } })).toThrow(/Investor/);
   });
 });
 
@@ -115,7 +142,7 @@ describe('DocidApiClient', () => {
       runOnce: (_provider, operation) => { ran.push('once'); return operation(); },
       close: () => Promise.resolve()
     };
-    const deposit = buildDocidDeposit({ title: 'T', creators: [] }, { docid: '20.500.14351/9f2c1e', resourceTypeId: 18 });
+    const deposit = buildDocidDeposit({ ...record, creators: [], funding: [] }, { docid: '20.500.14351/9f2c1e', lists: LISTS });
     await expect(new DocidApiClient({ fetch, operationRunner: runner }).deposit({ token: 't', deposit })).resolves.toEqual({ publicationId: 4321, docid: '20.500.14351/9f2c1e' });
     expect(ran).toEqual(['once']);
     // A runner with no runOnce of its own is not used to send it, since its run may retry.
@@ -125,7 +152,7 @@ describe('DocidApiClient', () => {
     expect(twice.calls).toHaveLength(1);
     const form = calls[0]!.init.body as FormData;
     expect(form.get('documentDocid')).toBe('20.500.14351/9f2c1e');
-    expect(form.get('resourceType')).toBe('18');
+    expect(form.get('resourceType')).toBe('21');
   });
 
   it('updates a record, withdraws and reinstates at the record routes', async () => {

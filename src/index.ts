@@ -79,6 +79,7 @@ export {
 export type { ZenodoFileCorrectionApproval } from './publication/file-corrections.js';
 export {
 	CREDIT_ROLES,
+	FUNDER_TYPES,
 	parsePublicationIdentifiers,
 	parsePublicationRecordSnapshot
 } from './publication/record.js';
@@ -86,6 +87,7 @@ export { isOpenLicense, licenseUrlOf } from './publication/licenses.js';
 export type {
 	CrossrefDepositMetadata,
 	CreditRole,
+	FunderType,
 	PublicationAffiliation,
 	PublicationCreator,
 	PublicationFileAccess,
@@ -225,7 +227,7 @@ export type {
 } from './zenodo/verification.js';
 export { DocidApiClient } from './docid/client.js';
 export type { DocidApiClientOptions, DocidFetchLike, DocidResponseLike, DocidSession } from './docid/client.js';
-export { DOCID_AUTHOR_ROLE, buildDocidDeposit } from './docid/deposit.js';
-export type { DocidAffiliation, DocidCreator, DocidDeposit, DocidDepositOptions, DocidFile, DocidFunder, DocidRecordInput } from './docid/deposit.js';
+export { DOCID_AUTHOR_ROLE, buildDocidDeposit, docidResourceType } from './docid/deposit.js';
+export type { DocidDeposit, DocidDepositOptions, DocidFile, DocidLists, DocidOption } from './docid/deposit.js';
 export { IDENTIFIER_SERVICES, IDENTIFIER_SERVICE_IDS } from './publication/services.js';
 export type { IdentifierService, IdentifierServiceId } from './publication/services.js';
