@@ -148,7 +148,11 @@ export function buildDocidDeposit(record: PublicationProviderMetadata, options: 
       ['filesPublications[0][title]', title],
       ['filesPublications[0][description]', 'Full text'],
       ['filesPublications[0][publication_type]', String(type.id)],
-      ['filesPublications[0][file_type]', options.file.contentType]
+      ['filesPublications[0][file_type]', options.file.contentType],
+      // DOCiD refuses a file without an identifier. Its own form names the record's Handle (type 1); a DOI here would
+      // make DOCiD mint the file a second Handle.
+      ['filesPublications[0][identifier]', '1'],
+      ['filesPublications[0][generated_identifier]', options.docid]
     );
     files.push(['filesPublications_0_file', options.file]);
   }
