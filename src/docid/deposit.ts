@@ -67,7 +67,8 @@ const PUBLICATION_TYPE: Readonly<Record<string, string>> = {
   BookSection: 'Book Chapter',
   ConferencePaper: 'Proceeding',
   Preprint: 'Preprint',
-  Book: 'Book'
+  Book: 'Book',
+  Letter: 'Letter To Editor'
 };
 
 const FUNDER_TYPE: Readonly<Record<FunderType, string>> = { grantor: 'Grantor', investor: 'Investor', corporation: 'Corporation' };
