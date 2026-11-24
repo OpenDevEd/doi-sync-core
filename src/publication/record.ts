@@ -59,12 +59,18 @@ export interface PublicationRelation {
   readonly description?: string | undefined;
 }
 
+/** What kind of body funds a work, as DOCiD records it: one that gives grants, one that invests, or a company. */
+export const FUNDER_TYPES = ['grantor', 'investor', 'corporation'] as const;
+export type FunderType = (typeof FUNDER_TYPES)[number];
+
 /** One funder of the work, with its identifier in the Crossref Funder Registry (`https://doi.org/10.13039/…`) when known. */
 export interface PublicationFunding {
   readonly funderName: string;
   readonly funderIdentifier?: string | undefined;
   /** The funder's ROR ID (the bare 9 characters). */
   readonly funderRor?: string | undefined;
+  /** Left out, a grantor. Only DOCiD takes it. */
+  readonly funderType?: FunderType | undefined;
   readonly awards: readonly string[];
 }
 
@@ -175,6 +181,7 @@ const publicationFundingSchema: z.ZodType<PublicationFunding> = z.object({
   funderName: nonEmptyString,
   funderIdentifier: nonEmptyString.optional(),
   funderRor: rorSchema.optional(),
+  funderType: z.enum(FUNDER_TYPES).optional(),
   awards: z.array(nonEmptyString)
 }).strict();
 
