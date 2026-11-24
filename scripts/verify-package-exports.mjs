@@ -15,3 +15,8 @@ const metadata = require("@opendeved/doi-sync-core/metadata");
 if (typeof metadata.validateZenodoPublicationRecord !== "function" || typeof metadata.validateCrossrefPublicationRecord !== "function") {
     throw new Error("The shared metadata validators cannot be loaded with require()");
 }
+
+const docid = require("@opendeved/doi-sync-core/docid");
+if (typeof docid.docidResourceType !== "function" || !Array.isArray(docid.FUNDER_TYPES)) {
+	throw new Error("The DOCiD export cannot be loaded with require()");
+}
