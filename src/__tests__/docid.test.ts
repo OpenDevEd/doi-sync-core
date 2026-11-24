@@ -90,7 +90,9 @@ describe('buildDocidDeposit', () => {
       'filesPublications[0][title]': record.title,
       'filesPublications[0][description]': 'Full text',
       'filesPublications[0][publication_type]': '5',
-      'filesPublications[0][file_type]': 'application/pdf'
+      'filesPublications[0][file_type]': 'application/pdf',
+      'filesPublications[0][identifier]': '1',
+      'filesPublications[0][generated_identifier]': '20.500.14351/9f2c1e'
     });
     expect(files).toEqual([['filesPublications_0_file', pdf]]);
   });
