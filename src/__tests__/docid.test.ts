@@ -30,7 +30,7 @@ const header = (init: RequestInit, name: string) => (init.headers as Record<stri
 // DOCiD's lists as its production API gave them on 2026-11-23, with the two resource types its Publisher accounts may use.
 const LISTS: DocidLists = {
   resourceTypes: [{ id: 21, name: 'Manuscripts' }, { id: 22, name: 'Book' }],
-  publicationTypes: [{ id: 1, name: 'Article' }, { id: 5, name: 'Monograph' }, { id: 19, name: 'Book' }],
+  publicationTypes: [{ id: 1, name: 'Article' }, { id: 5, name: 'Monograph' }, { id: 19, name: 'Book' }, { id: 18, name: 'Report' }],
   funderTypes: [{ id: 1, name: 'Grantor' }, { id: 2, name: 'Investor' }, { id: 3, name: 'Corporation' }]
 };
 
@@ -38,6 +38,7 @@ const record: PublicationProviderMetadata = {
   itemType: 'Report',
   title: 'Monthly cash transfers to older people in Lusaka',
   publicationDate: '2026-11-01',
+  license: 'cc-by-4.0',
   abstract: 'We interviewed 42 recipients.',
   doi: '10.53832/openscholar-reports.r100700',
   tags: [],
@@ -89,10 +90,13 @@ describe('buildDocidDeposit', () => {
       'funders[1][type]': '2',
       'filesPublications[0][title]': record.title,
       'filesPublications[0][description]': 'Full text',
-      'filesPublications[0][publication_type]': '5',
+      'filesPublications[0][publication_type]': '18',
       'filesPublications[0][file_type]': 'application/pdf',
       'filesPublications[0][identifier]': '1',
-      'filesPublications[0][generated_identifier]': '20.500.14351/9f2c1e'
+      'filesPublications[0][generated_identifier]': '20.500.14351/9f2c1e',
+      'filesPublications[0][publication_date]': '2026-11-01',
+      'filesPublications[0][license_id]': 'CC-BY-4.0',
+      rightsDeclaration: 'true'
     });
     expect(files).toEqual([['filesPublications_0_file', pdf]]);
   });
@@ -104,6 +108,9 @@ describe('buildDocidDeposit', () => {
     const pdf = { filename: 'a.pdf', contentType: 'application/pdf', bytes: new Uint8Array() };
     const article = Object.fromEntries(buildDocidDeposit({ ...record, itemType: 'JournalArticle' }, { docid: 'x', lists: LISTS, file: pdf }).fields);
     expect(article['filesPublications[0][publication_type]']).toBe('1');
+    // A licence DOCiD doesn't offer goes unsent, and so does the rights declaration that comes with one.
+    const unlicensed = Object.fromEntries(buildDocidDeposit({ ...record, license: 'mit' }, { docid: 'x', lists: LISTS, file: pdf }).fields);
+    expect([unlicensed['filesPublications[0][license_id]'], unlicensed['rightsDeclaration']]).toEqual([undefined, undefined]);
   });
 
   it('sends the title as the description DOCiD requires when there is no abstract', () => {
