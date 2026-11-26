@@ -68,8 +68,12 @@ const PUBLICATION_TYPE: Readonly<Record<string, string>> = {
   ConferencePaper: 'Proceeding',
   Preprint: 'Preprint',
   Book: 'Book',
-  Letter: 'Letter To Editor'
+  Letter: 'Letter To Editor',
+  Report: 'Report'
 };
+
+/** The licences DOCiD offers for a file, by their Zenodo IDs. DOCiD's code for each is the same ID in capitals (`CC-BY-4.0`). */
+const DOCID_LICENSES: ReadonlySet<string> = new Set(['cc0-1.0', 'cc-by-4.0', 'cc-by-sa-4.0', 'cc-by-nd-4.0', 'cc-by-nc-4.0', 'cc-by-nc-sa-4.0', 'cc-by-nc-nd-4.0']);
 
 const FUNDER_TYPE: Readonly<Record<FunderType, string>> = { grantor: 'Grantor', investor: 'Investor', corporation: 'Corporation' };
 
@@ -152,8 +156,16 @@ export function buildDocidDeposit(record: PublicationProviderMetadata, options: 
       // DOCiD refuses a file without an identifier. Its own form names the record's Handle (type 1); a DOI here would
       // make DOCiD mint the file a second Handle.
       ['filesPublications[0][identifier]', '1'],
-      ['filesPublications[0][generated_identifier]', options.docid]
+      ['filesPublications[0][generated_identifier]', options.docid],
+      // The work's own date, which DOCiD keeps apart from the day it assigned the DOCiD.
+      ['filesPublications[0][publication_date]', record.publicationDate]
     );
+    // DOCiD refuses a licence it doesn't offer, and takes a file without one.
+    const license = record.license?.toLowerCase();
+    if (license && DOCID_LICENSES.has(license)) {
+      // DOCiD asks for its rights declaration with every licence; the author made it in the publishing agreement they signed.
+      fields.push(['filesPublications[0][license_id]', license.toUpperCase()], ['rightsDeclaration', 'true']);
+    }
     files.push(['filesPublications_0_file', options.file]);
   }
   if (options.poster) files.push(['publicationPoster', options.poster]);
