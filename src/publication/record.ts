@@ -4,6 +4,7 @@ import { normalizeDoi } from '../doi.js';
 import { jsonValueSchema } from '../json.js';
 import type { JsonObject } from '../json.js';
 import { compareCodeUnits } from '../sort.js';
+import { FUNDER_TYPES, type FunderType } from './funders.js';
 
 const nonEmptyString = z.string().trim().min(1);
 const httpUrl = z.url().refine(
@@ -59,9 +60,7 @@ export interface PublicationRelation {
   readonly description?: string | undefined;
 }
 
-/** What kind of body funds a work, as DOCiD records it: one that gives grants, one that invests, or a company. */
-export const FUNDER_TYPES = ['grantor', 'investor', 'corporation'] as const;
-export type FunderType = (typeof FUNDER_TYPES)[number];
+export { FUNDER_TYPES, type FunderType } from './funders.js';
 
 /** One funder of the work, with its identifier in the Crossref Funder Registry (`https://doi.org/10.13039/…`) when known. */
 export interface PublicationFunding {

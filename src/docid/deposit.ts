@@ -3,11 +3,12 @@
  * registry, which gives each record a Handle under 20.500.14351. It is made from the same record Crossref and Zenodo
  * are sent. Field names are DOCiD's own, read from its source (Africa-PID-Alliance/DOCiD `backend/app/routes/publications.py`).
  */
-import type { FunderType, PublicationAffiliation, PublicationProviderMetadata } from '../publication/record.js';
+import type { FunderType } from '../publication/funders.js';
+import type { PublicationAffiliation, PublicationProviderMetadata } from '../publication/record.js';
 
 // Also its own entry point (`@opendeved/doi-sync-core/docid`), for code that can't load the package root's Node modules: a
 // browser, or a server runtime without Node.
-export { FUNDER_TYPES, type FunderType } from '../publication/record.js';
+export { FUNDER_TYPES, type FunderType } from '../publication/funders.js';
 
 /** One entry of a DOCiD list: its id, and its name as DOCiD shows it. */
 export interface DocidOption {
